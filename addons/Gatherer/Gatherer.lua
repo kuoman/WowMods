@@ -87,18 +87,12 @@ local function FindActiveHunterTrack()
 end
 
 
--- the gather tracker to restore: the only one the player has, otherwise the
+-- the gather to restore: the only one the player has, otherwise the
 -- one they last used (Find Minerals by default)
 local function GetPreferredTracker()
-
-    if isMiner and not isPicker then
-        return "Find Minerals"
-    elseif isPicker and not isMiner then
-        return "Find Herbs"
-    elseif isMiner and isPicker then
-        return lastGatherer or "Find Minerals"
-    end
-
+    if isMiner and isPicker then return lastGatherer or "Find Minerals" end
+    if isMiner then return "Find Minerals" end
+    if isPicker then return "Find Herbs" end
     return nil
 end
 
