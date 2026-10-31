@@ -3,8 +3,23 @@ dist/*
 
 # Editors / OS
 .vscode/
-.idea/
 *.swp
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+[Bb]in/
+[Oo]bj/
 .DS_Store
 Thumbs.db
 desktop.ini
