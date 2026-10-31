@@ -21,32 +21,27 @@ local isHunter = false
 local lastGatherer = nil -- "Find Minerals" or "Find Herbs", whichever was last seen active
 
 
+local MINING_SKILL = 186
+local HERBALISM_SKILL = 182
+
 local function CheckProfessions()
 
     isMiner = false
     isPicker = false
 
-    local _, classToken = UnitClass("player")
-    isHunter = classToken == "HUNTER"
+    isHunter = select(2, UnitClass("player")) == "HUNTER"
 
-    local profession1, profession2 = GetProfessions()
+    for _, professionIndex in pairs({ GetProfessions() }) do
 
-    local professions = { profession1, profession2 }
+        local skillLine = select(7, GetProfessionInfo(professionIndex))
 
-    for tableIndex, professionIndex in pairs(professions) do
+        if skillLine == MINING_SKILL then
+            isMiner = true
+            print("Profession: Mining detected.")
 
-        if professionIndex then
-
-            local name = GetProfessionInfo(professionIndex)
-
-            if name == "Mining" then
-                isMiner = true
-                print("Profession: Mining detected.")
-
-            elseif name == "Herbalism" then
-                isPicker = true
-                print("Profession: Herbalism detected.")
-            end
+        elseif skillLine == HERBALISM_SKILL then
+            isPicker = true
+            print("Profession: Herbalism detected.")
         end
     end
 end
