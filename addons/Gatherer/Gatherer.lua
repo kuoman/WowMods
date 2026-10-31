@@ -429,7 +429,7 @@ end)
 
 
 -- player command to enable or diable the addon
-SLASH_Gatherer1 = "/gatherer"
+SLASH_GATHERER1 = "/gatherer"
 SlashCmdList["GATHERER"] = function()
     addonEnabled = not addonEnabled
     print("Gatherer: " .. (addonEnabled and "enabled." or "disabled."))
