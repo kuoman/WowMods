@@ -366,6 +366,15 @@ toggleButton:SetScript("OnLeave", function()
 end)
 
 
+-- clear pending-request flags, then re-check tracking after a short delay
+local function ResetAndCheckTracking()
+    miningRequest = false
+    herbalismRequest = false
+
+    C_Timer.After(0.25, CheckTracking)
+end
+
+
 -- player command to enable or diable the addon
 SLASH_GATHERER1 = "/gatherer"
 SlashCmdList["GATHERER"] = function()
@@ -378,13 +387,7 @@ SlashCmdList["GATHERER"] = function()
         -- run the same startup sequence used on login/respawn
         CheckProfessions()
         UpdateToggleButton()
-
-        miningRequest = false
-        herbalismRequest = false
-
-        C_Timer.After(0.25, function()
-            CheckTracking()
-        end)
+        ResetAndCheckTracking()
     end
 end
 
@@ -400,13 +403,7 @@ local function OnEvent(self, event)
 
         CheckProfessions()
         UpdateToggleButton()
-
-        miningRequest = false
-        herbalismRequest = false
-
-        C_Timer.After(0.25, function()
-            CheckTracking()
-        end)
+        ResetAndCheckTracking()
 
 
     elseif event == "MINIMAP_UPDATE_TRACKING" then
@@ -425,12 +422,7 @@ local function OnEvent(self, event)
             return
         end
 
-        miningRequest = false
-        herbalismRequest = false
-
-        C_Timer.After(0.25, function()
-            CheckTracking()
-        end)
+        ResetAndCheckTracking()
 
 
     elseif event == "UNIT_AURA" then
@@ -455,12 +447,7 @@ local function OnEvent(self, event)
 
     elseif event == "PLAYER_UNGHOST" then
 
-        miningRequest = false
-        herbalismRequest = false
-
-        C_Timer.After(0.25, function()
-            CheckTracking()
-        end)
+        ResetAndCheckTracking()
 
     end
 end
