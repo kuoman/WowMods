@@ -1,0 +1,13 @@
+dist/*
+!dist/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local WoW data
+*.lua.bak
