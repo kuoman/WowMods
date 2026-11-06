@@ -153,6 +153,73 @@ describe("Gatherer", function()
         end)
     end)
 
+    describe("tracker matching edge cases", function()
+
+        it("matches the exact English name even without a spell ID", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = { { name = "Find Minerals", active = false } }
+            login()
+            assert.is_true(wow.world.trackers[1].active)
+        end)
+
+        it("does not match an unrelated tracker", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = {
+                { name = "Banker", type = "other", active = false },
+                { name = "Find Herbs", spellID = HERBS, active = false },
+            }
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("matches by spell ID when the entry has no name", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = { { spellID = MINERALS, active = false } }
+            login()
+            assert.is_true(wow.world.trackers[1].active)
+        end)
+
+        it("skips empty tracker slots", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = { false, wow.tracker("Find Minerals", MINERALS) }
+            wow.world.trackers[1] = nil
+            assert.has_no.errors(login)
+        end)
+
+        it("still matches by spell ID when the spell name API is missing", function()
+            wow.world.skills[MINING] = 75
+            _G.C_Spell = nil
+            wow.world.trackers = { { name = "Mineralien finden", spellID = MINERALS, active = false } }
+            login()
+            assert.is_true(wow.world.trackers[1].active)
+        end)
+
+        it("does not error without the spell name API when nothing matches", function()
+            wow.world.skills[MINING] = 75
+            _G.C_Spell = nil
+            wow.world.trackers = { { name = "Mineralien finden", active = false } }
+            assert.has_no.errors(login)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+    end)
+
+    describe("class detection", function()
+
+        it("knows the player is a Hunter as soon as the addon loads", function()
+            wow.world.class = "HUNTER"
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERERDIAG"]()
+            assert.is_true(wow.printed("isHunter=true"))
+        end)
+
+        it("knows a non-Hunter is not a Hunter", function()
+            wow.world.class = "WARRIOR"
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERERDIAG"]()
+            assert.is_true(wow.printed("isHunter=false"))
+        end)
+    end)
+
     describe("verification and retries", function()
 
         it("announces success once the tracker is confirmed", function()
