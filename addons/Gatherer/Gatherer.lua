@@ -11,7 +11,9 @@ local frame = CreateFrame("Frame")
 local addonEnabled = true
 local isMiner = false
 local isPicker = false
+local hasTreasure = false
 
+local treasureRequest = false
 local herbalismRequest = false
 local miningRequest = false
 
@@ -19,27 +21,32 @@ local isHunter = false
 local lastGatherer = nil -- "Find Minerals" or "Find Herbs", whichever was last seen active
 
 
-local MINING_SKILL = 186
-local HERBALISM_SKILL = 182
-
 local function CheckProfessions()
 
     isMiner = false
     isPicker = false
 
-    isHunter = select(2, UnitClass("player")) == "HUNTER"
+    local _, classToken = UnitClass("player")
+    isHunter = classToken == "HUNTER"
 
-    for _, professionIndex in pairs({ GetProfessions() }) do
+    local profession1, profession2 = GetProfessions()
 
-        local skillLine = select(7, GetProfessionInfo(professionIndex))
+    local professions = { profession1, profession2 }
 
-        if skillLine == MINING_SKILL then
-            isMiner = true
-            print("Profession: Mining detected.")
+    for tableIndex, professionIndex in pairs(professions) do
 
-        elseif skillLine == HERBALISM_SKILL then
-            isPicker = true
-            print("Profession: Herbalism detected.")
+        if professionIndex then
+
+            local name = GetProfessionInfo(professionIndex)
+
+            if name == "Mining" then
+                isMiner = true
+                print("Profession: Mining detected.")
+
+            elseif name == "Herbalism" then
+                isPicker = true
+                print("Profession: Herbalism detected.")
+            end
         end
     end
 end
@@ -85,14 +92,69 @@ local function FindActiveHunterTrack()
 end
 
 
--- the gather to restore: the only one the player has, otherwise the
+-- the gather tracker to restore: the only one the player has, otherwise the
 -- one they last used (Find Minerals by default)
 local function GetPreferredTracker()
-    if isMiner and isPicker then return lastGatherer or "Find Minerals" end
-    if isMiner then return "Find Minerals" end
-    if isPicker then return "Find Herbs" end
+
+    if isMiner and not isPicker then
+        return "Find Minerals"
+    elseif isPicker and not isMiner then
+        return "Find Herbs"
+    elseif isMiner and isPicker then
+        return lastGatherer or "Find Minerals"
+    end
+
     return nil
 end
+
+
+local function CheckRace()
+
+    if UnitIsDeadOrGhost("player") then
+        return
+    end
+
+    -- a Hunter chose a Track ability; leave it until they use the button
+    if FindActiveHunterTrack() then
+        return
+    end
+
+    local raceName, raceToken, raceID = UnitRace("player")
+
+    if raceName == "Dwarf" then
+
+        local treasureIndex, treasureActive = FindTracker("Find Treasure")
+
+        if treasureActive then
+            treasureRequest = false
+            return
+        end
+
+        if treasureIndex and not treasureRequest then
+
+            treasureRequest = true
+
+            print("Dwarf Race detected. Enabling Find Treasure tracking.")
+
+            C_Minimap.SetTracking(treasureIndex, true)
+
+            C_Timer.After(0.25, function()
+
+                local _, treasureActiveNow = FindTracker("Find Treasure")
+
+                if treasureActiveNow then
+                    print("Gatherer: Find Treasure active.")
+                else
+                    print("Gatherer: Could not enable Find Treasure.")
+                end
+
+                treasureRequest = false
+
+            end)
+        end
+    end
+end
+
 
 local MAX_TRACKING_RETRIES = 3
 local trackingRetries = 0
@@ -366,17 +428,8 @@ toggleButton:SetScript("OnLeave", function()
 end)
 
 
--- clear pending-request flags, then re-check tracking after a short delay
-local function ResetAndCheckTracking()
-    miningRequest = false
-    herbalismRequest = false
-
-    C_Timer.After(0.25, CheckTracking)
-end
-
-
 -- player command to enable or diable the addon
-SLASH_GATHERER1 = "/gatherer"
+SLASH_Gatherer1 = "/gatherer"
 SlashCmdList["GATHERER"] = function()
     addonEnabled = not addonEnabled
     print("Gatherer: " .. (addonEnabled and "enabled." or "disabled."))
@@ -387,14 +440,24 @@ SlashCmdList["GATHERER"] = function()
         -- run the same startup sequence used on login/respawn
         CheckProfessions()
         UpdateToggleButton()
-        ResetAndCheckTracking()
+
+        miningRequest = false
+        herbalismRequest = false
+        treasureRequest = false
+
+        C_Timer.After(0.25, function()
+            CheckTracking()
+            C_Timer.After(1.2, function()
+                CheckRace()
+            end)
+        end)
     end
 end
 
 
 
 local function OnEvent(self, event)
-    
+
     if not addonEnabled then
         return
     end
@@ -403,7 +466,20 @@ local function OnEvent(self, event)
 
         CheckProfessions()
         UpdateToggleButton()
-        ResetAndCheckTracking()
+
+        miningRequest = false
+        herbalismRequest = false
+        treasureRequest = false
+
+        C_Timer.After(0.25, function()
+
+            CheckTracking()
+
+            C_Timer.After(1.2, function()
+                CheckRace()
+            end)
+
+        end)
 
 
     elseif event == "MINIMAP_UPDATE_TRACKING" then
@@ -416,13 +492,30 @@ local function OnEvent(self, event)
 
         CheckTracking()
 
+        C_Timer.After(1.2, function()
+            CheckRace()
+        end)
+
+
     elseif event == "PLAYER_ALIVE" then
 
         if UnitIsDeadOrGhost("player") then
             return
         end
 
-        ResetAndCheckTracking()
+        miningRequest = false
+        herbalismRequest = false
+        treasureRequest = false
+
+        C_Timer.After(0.25, function()
+
+            CheckTracking()
+
+            C_Timer.After(1.2, function()
+                CheckRace()
+            end)
+
+        end)
 
 
     elseif event == "UNIT_AURA" then
@@ -447,7 +540,19 @@ local function OnEvent(self, event)
 
     elseif event == "PLAYER_UNGHOST" then
 
-        ResetAndCheckTracking()
+        miningRequest = false
+        herbalismRequest = false
+        treasureRequest = false
+
+        C_Timer.After(0.25, function()
+
+            CheckTracking()
+
+            C_Timer.After(1.2, function()
+                CheckRace()
+            end)
+
+        end)
 
     end
 end
