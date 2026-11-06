@@ -11,12 +11,12 @@ local M = {}
 
 local function newTexture()
     local t = {}
-    return setmetatable(t, { __index = function(self, key)
+    return setmetatable(t, { __index = function(tbl, key)
         -- every texture/frame method is a no-op that remembers its last args
         local fn = function(obj, ...)
             obj["_" .. key] = { ... }
         end
-        rawset(self, key, fn)
+        rawset(tbl, key, fn)
         return fn
     end })
 end
@@ -31,7 +31,7 @@ local function newFrame(name)
     function f:Show() self.shown = true end
     function f:Hide() self.shown = false end
     function f:IsShown() return self.shown end
-    function f:CreateTexture()
+    function f.CreateTexture()
         local tex = newTexture()
         function tex:SetTexture(path) self.texture = path end
         function tex:SetDesaturated(v) self.desaturated = v end
