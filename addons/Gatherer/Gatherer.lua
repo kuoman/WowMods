@@ -5,8 +5,11 @@ print("========================================")
 print("|cff69BE28          Gatherer         |r")
 print("========================================")
 
+local ADDON_NAME = ... -- the client passes the addon's folder name
+
 local frame = CreateFrame("Frame")
 
+local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
 
 local addonEnabled = true
 local isMiner = false
@@ -277,21 +280,34 @@ local HERBS_ICON = "Interface\\AddOns\\Gatherer\\icons\\herbs"   -- green: Herba
 local MINING_ICON = "Interface\\AddOns\\Gatherer\\icons\\mining" -- red: Mining only
 local BOTH_ICON = "Interface\\AddOns\\Gatherer\\icons\\both"     -- yellow: Mining + Herbalism
 
--- angle around the minimap edge (degrees, 0 = right, 90 = top); the default
--- tracking icon sits near 140, so this stays just above it on the upper-left
-local MINIMAP_ANGLE = 115
-local MINIMAP_RADIUS = 105
+-- The button sits on the minimap edge at an angle (degrees, 0 = right, 90 =
+-- top) the player can change by dragging. The default is just above the
+-- default tracking icon, which sits near 140 on the upper-left.
+local DEFAULT_ANGLE = 115
+
+-- saved between sessions; until the saved variables load this is a stand-in
+local db = { angle = DEFAULT_ANGLE }
 
 local toggleButton = CreateFrame("Button", "GathererToggleButton", Minimap)
 toggleButton:SetSize(31, 31)
 toggleButton:SetFrameStrata("MEDIUM")
 toggleButton:SetFrameLevel(8)
-toggleButton:SetPoint("CENTER", Minimap, "CENTER",
-    MINIMAP_RADIUS * math.cos(math.rad(MINIMAP_ANGLE)),
-    MINIMAP_RADIUS * math.sin(math.rad(MINIMAP_ANGLE)))
 toggleButton:EnableMouse(true)
 toggleButton:RegisterForClicks("LeftButtonUp")
+toggleButton:RegisterForDrag("LeftButton")
 toggleButton:Hide()
+
+-- put the button on the minimap edge at the saved angle
+local function PlaceToggleButton()
+
+    local angle = math.rad(db.angle)
+    local radius = (Minimap:GetWidth() or 140) / 2 + 5
+
+    toggleButton:ClearAllPoints()
+    toggleButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+end
+
+PlaceToggleButton()
 
 -- standard round minimap button layers
 local background = toggleButton:CreateTexture(nil, "BACKGROUND")
@@ -378,11 +394,32 @@ toggleButton:SetScript("OnEnter", function(self)
         GameTooltip:AddLine("Click to switch Minerals / Herbs.", 0.7, 0.7, 0.7)
     end
 
+    GameTooltip:AddLine("Drag to move this button.", 0.7, 0.7, 0.7)
     GameTooltip:Show()
 end)
 
 toggleButton:SetScript("OnLeave", function()
     GameTooltip:Hide()
+end)
+
+-- dragging: while the button is held, follow the cursor around the minimap
+-- edge by turning the cursor's offset from the minimap center into an angle
+toggleButton:SetScript("OnDragStart", function(self)
+
+    self:SetScript("OnUpdate", function()
+
+        local centerX, centerY = Minimap:GetCenter()
+        local cursorX, cursorY = GetCursorPosition()
+        local scale = Minimap:GetEffectiveScale()
+
+        db.angle = math.deg(atan2(cursorY / scale - centerY, cursorX / scale - centerX))
+
+        PlaceToggleButton()
+    end)
+end)
+
+toggleButton:SetScript("OnDragStop", function(self)
+    self:SetScript("OnUpdate", nil)
 end)
 
 
@@ -468,6 +505,20 @@ end
 
 -- one handler per event; the events registered below come from this table
 local eventHandlers = {}
+
+-- saved variables are loaded by the client just before this fires
+function eventHandlers.ADDON_LOADED(addonName)
+
+    if addonName ~= ADDON_NAME then
+        return
+    end
+
+    GathererDB = GathererDB or {}
+    db = GathererDB
+    db.angle = db.angle or DEFAULT_ANGLE
+
+    PlaceToggleButton()
+end
 
 function eventHandlers.PLAYER_ENTERING_WORLD()
     Refresh()

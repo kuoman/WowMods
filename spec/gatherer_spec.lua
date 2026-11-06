@@ -496,7 +496,7 @@ describe("Gatherer", function()
 
         it("registers exactly the events it handles", function()
             wow.load("addons/Gatherer/Gatherer.lua")
-            local expected = { "PLAYER_ENTERING_WORLD", "MINIMAP_UPDATE_TRACKING", "PLAYER_ALIVE",
+            local expected = { "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "MINIMAP_UPDATE_TRACKING", "PLAYER_ALIVE",
                 "PLAYER_UNGHOST", "SKILL_LINES_CHANGED", "SPELLS_CHANGED", "UNIT_AURA" }
             local count = 0
             for _ in pairs(wow.frame.events) do count = count + 1 end
@@ -631,6 +631,125 @@ describe("Gatherer", function()
             login()
             GathererToggleButton.scripts.OnClick(GathererToggleButton)
             assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+    end)
+
+    describe("minimap button position", function()
+
+        local function radians(deg) return deg * math.pi / 180 end
+
+        local function startDrag()
+            GathererToggleButton.scripts.OnDragStart(GathererToggleButton)
+        end
+
+        local function dragTo(cursorX, cursorY)
+            wow.world.cursor = { x = cursorX, y = cursorY }
+            GathererToggleButton.scripts.OnUpdate(GathererToggleButton)
+        end
+
+        it("sits on the minimap edge at the default angle", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            local x, y = wow.offset(GathererToggleButton)
+            -- 140px minimap: radius is half the width plus 5
+            assert.is_near(75 * math.cos(radians(115)), x, 0.01)
+            assert.is_near(75 * math.sin(radians(115)), y, 0.01)
+        end)
+
+        it("follows the minimap's size", function()
+            wow.world.minimapWidth = 200
+            wow.load("addons/Gatherer/Gatherer.lua")
+            local x, y = wow.offset(GathererToggleButton)
+            assert.is_near(105 * math.cos(radians(115)), x, 0.01)
+            assert.is_near(105 * math.sin(radians(115)), y, 0.01)
+        end)
+
+        it("can be dragged with the left mouse button", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            assert.is_truthy(GathererToggleButton.scripts.OnDragStart)
+            assert.is_truthy(GathererToggleButton.scripts.OnDragStop)
+        end)
+
+        it("follows the cursor around the minimap edge while dragging", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            startDrag()
+
+            dragTo(600, 500)   -- directly right of the minimap center
+            local x, y = wow.offset(GathererToggleButton)
+            assert.is_near(75, x, 0.01)
+            assert.is_near(0, y, 0.01)
+
+            dragTo(500, 650)   -- directly above, and farther away: still on the edge
+            x, y = wow.offset(GathererToggleButton)
+            assert.is_near(0, x, 0.01)
+            assert.is_near(75, y, 0.01)
+
+            dragTo(400, 400)   -- lower left
+            x, y = wow.offset(GathererToggleButton)
+            assert.is_near(-75 * math.cos(radians(45)), x, 0.01)
+            assert.is_near(-75 * math.sin(radians(45)), y, 0.01)
+        end)
+
+        it("accounts for the minimap's effective scale", function()
+            wow.world.minimapScale = 2
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            startDrag()
+            dragTo(1200, 1000)   -- (600, 500) once divided by the scale
+            local x, y = wow.offset(GathererToggleButton)
+            assert.is_near(75, x, 0.01)
+            assert.is_near(0, y, 0.01)
+        end)
+
+        it("stops following the cursor when the drag ends", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            startDrag()
+            GathererToggleButton.scripts.OnDragStop(GathererToggleButton)
+            assert.is_nil(GathererToggleButton.scripts.OnUpdate)
+        end)
+
+        it("saves the dragged angle", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            startDrag()
+            dragTo(500, 600)
+            assert.is_near(90, GathererDB.angle, 0.01)
+        end)
+
+        it("creates its saved variables with the default angle on first run", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            assert.are.equal(115, GathererDB.angle)
+        end)
+
+        it("restores a saved angle", function()
+            _G.GathererDB = { angle = 270 }
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "Gatherer")
+            local x, y = wow.offset(GathererToggleButton)
+            assert.is_near(0, x, 0.01)
+            assert.is_near(-75, y, 0.01)
+        end)
+
+        it("ignores other addons loading", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            wow.fire("ADDON_LOADED", "SomeOtherAddon")
+            assert.is_nil(GathererDB)
+        end)
+
+        it("keeps working if the drag happens before the saved variables load", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            startDrag()
+            assert.has_no.errors(function() dragTo(600, 500) end)
+        end)
+
+        it("the tooltip tells the player they can drag it", function()
+            wow.world.skills[MINING] = 75
+            login()
+            GathererToggleButton.scripts.OnEnter(GathererToggleButton)
+            local text = table.concat(GameTooltip.lines, "\n")
+            assert.is_truthy(text:find("Drag", 1, true))
         end)
     end)
 
