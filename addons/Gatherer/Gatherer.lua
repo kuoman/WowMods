@@ -15,7 +15,8 @@ local isPicker = false
 -- name of the gather tracker we asked for and haven't seen confirmed yet
 local pendingRequest = nil
 
-local isHunter = false
+-- a character's class never changes, so this is settled once at load
+local isHunter = select(2, UnitClass("player")) == "HUNTER"
 
 local MINING_SKILL_ID = 186
 local HERBALISM_SKILL_ID = 182
@@ -40,9 +41,6 @@ end
 
 
 local function CheckProfessions()
-
-    local _, classToken = UnitClass("player")
-    isHunter = classToken == "HUNTER"
 
     local miner = KnowsSkill(MINING_SKILL_ID)
     local picker = KnowsSkill(HERBALISM_SKILL_ID)
