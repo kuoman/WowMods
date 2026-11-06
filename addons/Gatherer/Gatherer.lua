@@ -398,6 +398,18 @@ SlashCmdList["GATHERERDIAG"] = function()
 
     print("Gatherer diag: isMiner=" .. tostring(isMiner) .. " isPicker=" .. tostring(isPicker) .. " isHunter=" .. tostring(isHunter))
 
+    local _, mineralsActive = FindTracker("Find Minerals")
+    local _, herbsActive = FindTracker("Find Herbs")
+    local huntIndex = FindActiveHunterTrack()
+    print("addonEnabled=" .. tostring(addonEnabled) .. " mineralsActive=" .. tostring(mineralsActive)
+        .. " herbsActive=" .. tostring(herbsActive) .. " activeHunterTrack=" .. tostring(huntIndex))
+
+    local bx, by = toggleButton:GetCenter()
+    local mx, my = Minimap:GetCenter()
+    print("button: shown=" .. tostring(toggleButton:IsShown()) .. " center=" .. tostring(bx) .. "," .. tostring(by)
+        .. " minimap center=" .. tostring(mx) .. "," .. tostring(my)
+        .. " screen=" .. tostring(UIParent:GetWidth()) .. "x" .. tostring(UIParent:GetHeight()))
+
     for _, skillID in ipairs({ MINING_SKILL_ID, HERBALISM_SKILL_ID }) do
 
         local info = C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID and C_SkillInfo.GetSkillLineInfoByID(skillID)
