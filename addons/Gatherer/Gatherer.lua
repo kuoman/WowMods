@@ -12,14 +12,17 @@ local addonEnabled = true
 local isMiner = false
 local isPicker = false
 
-local herbalismRequest = false
-local miningRequest = false
+-- name of the gather tracker we asked for and haven't seen confirmed yet
+local pendingRequest = nil
 
 local isHunter = false
 
 local MINING_SKILL_ID = 186
 local HERBALISM_SKILL_ID = 182
-local TRACKER_SPELLS = { ["Find Minerals"] = 2580, ["Find Herbs"] = 2383 }
+local FIND_MINERALS = "Find Minerals"
+local FIND_HERBS = "Find Herbs"
+local TRACKER_SPELLS = { [FIND_MINERALS] = 2580, [FIND_HERBS] = 2383 }
+local GATHER_TRACKERS = { FIND_MINERALS, FIND_HERBS }
 
 
 -- true if the player has learned the skill line (rank above 0)
@@ -106,6 +109,37 @@ local function FindTracker(trackerName)
 end
 
 
+-- name of the gather tracker that is currently on, or nil
+local function ActiveGatherTracker()
+
+    for _, trackerName in ipairs(GATHER_TRACKERS) do
+
+        local _, active = FindTracker(trackerName)
+
+        if active then
+            return trackerName
+        end
+    end
+
+    return nil
+end
+
+
+-- The tracker we should switch on automatically, or nil. With both
+-- professions (or neither) there is nothing automatic to do: for Mining +
+-- Herbalism the toggle button is the only thing that switches trackers.
+local function WantedTracker()
+
+    if isMiner and not isPicker then
+        return FIND_MINERALS
+    elseif isPicker and not isMiner then
+        return FIND_HERBS
+    end
+
+    return nil
+end
+
+
 -- Hunters only: returns the index and info of the active "Track ..." ability
 -- (Track Beasts, Track Humanoids, ...), or nil if none is on
 local function FindActiveHunterTrack()
@@ -141,7 +175,7 @@ local CheckTracking -- forward declaration, used by VerifyTracking for retries
 -- SetTracking casts the Find spell, which can fail silently (e.g. during the
 -- global cooldown after an Aspect). Confirm it took, otherwise clear the
 -- request flag and try again a limited number of times.
-local function VerifyTracking(trackerName, clearRequest)
+local function VerifyTracking(trackerName)
 
     C_Timer.After(1.5, function()
 
@@ -153,7 +187,7 @@ local function VerifyTracking(trackerName, clearRequest)
             return
         end
 
-        clearRequest()
+        pendingRequest = nil
 
         if not addonEnabled or UnitIsDeadOrGhost("player") then
             trackingRetries = 0
@@ -161,10 +195,7 @@ local function VerifyTracking(trackerName, clearRequest)
         end
 
         -- player switched to the other gather tracker or a Hunter Track in the meantime
-        local _, mineralsActive = FindTracker("Find Minerals")
-        local _, herbsActive = FindTracker("Find Herbs")
-
-        if mineralsActive or herbsActive or FindActiveHunterTrack() then
+        if ActiveGatherTracker() or FindActiveHunterTrack() then
             trackingRetries = 0
             return
         end
@@ -186,15 +217,9 @@ function CheckTracking()
         return
     end
 
-    local mineralIndex, mineralsActive = FindTracker("Find Minerals")
-    local herbIndex, herbsActive = FindTracker("Find Herbs")
-
-    if mineralsActive then
-        miningRequest = false
-    end
-
-    if herbsActive then
-        herbalismRequest = false
+    -- the request has been confirmed
+    if pendingRequest and ActiveGatherTracker() == pendingRequest then
+        pendingRequest = nil
     end
 
     -- a Hunter chose a Track ability; leave it until they use the button
@@ -202,41 +227,22 @@ function CheckTracking()
         return
     end
 
+    local wanted = WantedTracker()
 
-    if isMiner and not isPicker then
-
-        if mineralIndex and not miningRequest then
-
-            if not mineralsActive then
-
-                miningRequest = true
-
-                C_Minimap.SetTracking(mineralIndex, true)
-
-                VerifyTracking("Find Minerals", function() miningRequest = false end)
-            end
-        end
-
-
-    elseif isPicker and not isMiner then
-
-        if herbIndex and not herbalismRequest then
-
-            if not herbsActive then
-
-                herbalismRequest = true
-
-                C_Minimap.SetTracking(herbIndex, true)
-
-                VerifyTracking("Find Herbs", function() herbalismRequest = false end)
-            end
-        end
-
-
+    if not wanted or pendingRequest then
+        return
     end
 
-    -- Mining + Herbalism: never automatic. The toggle button is the only thing
-    -- that switches between Find Minerals and Find Herbs.
+    local index, active = FindTracker(wanted)
+
+    if index and not active then
+
+        pendingRequest = wanted
+
+        C_Minimap.SetTracking(index, true)
+
+        VerifyTracking(wanted)
+    end
 end
 
 
@@ -297,18 +303,17 @@ local function UpdateToggleButton()
     if isMiner and isPicker then
 
         -- dual skill: show whichever tracker is currently active
-        local _, mineralsActive = FindTracker("Find Minerals")
-        local _, herbsActive = FindTracker("Find Herbs")
+        local activeTracker = ActiveGatherTracker()
 
-        if herbsActive then
+        if activeTracker == FIND_HERBS then
             toggleButton.icon:SetTexture(HERBS_ICON)
-        elseif mineralsActive then
+        elseif activeTracker == FIND_MINERALS then
             toggleButton.icon:SetTexture(MINING_ICON)
         else
             toggleButton.icon:SetTexture(NEITHER_ICON)
         end
 
-        toggleButton.icon:SetDesaturated(not mineralsActive and not herbsActive)
+        toggleButton.icon:SetDesaturated(activeTracker == nil)
 
     elseif isPicker then
         toggleButton.icon:SetTexture(HERBS_ICON)
@@ -333,15 +338,12 @@ toggleButton:SetScript("OnClick", function(self)
         return
     end
 
-    local mineralIndex, mineralsActive = FindTracker("Find Minerals")
-    local herbIndex = FindTracker("Find Herbs")
+    -- minerals -> herbs; herbs or nothing -> minerals
+    local nextTracker = ActiveGatherTracker() == FIND_MINERALS and FIND_HERBS or FIND_MINERALS
+    local nextIndex = FindTracker(nextTracker)
 
-    if mineralsActive then
-        if herbIndex then
-            C_Minimap.SetTracking(herbIndex, true)
-        end
-    elseif mineralIndex then
-        C_Minimap.SetTracking(mineralIndex, true)
+    if nextIndex then
+        C_Minimap.SetTracking(nextIndex, true)
     end
 
     if GameTooltip:IsOwned(self) then
@@ -351,12 +353,9 @@ end)
 
 toggleButton:SetScript("OnEnter", function(self)
 
-    local _, mineralsActive = FindTracker("Find Minerals")
-    local _, herbsActive = FindTracker("Find Herbs")
-
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine("Gatherer")
-    GameTooltip:AddLine("Tracking: " .. (mineralsActive and "Find Minerals" or herbsActive and "Find Herbs" or "None"), 1, 1, 1)
+    GameTooltip:AddLine("Tracking: " .. (ActiveGatherTracker() or "None"), 1, 1, 1)
 
     if isMiner and isPicker then
         GameTooltip:AddLine("Click to switch Minerals / Herbs.", 0.7, 0.7, 0.7)
@@ -383,8 +382,7 @@ SlashCmdList["GATHERER"] = function()
         CheckProfessions()
         UpdateToggleButton()
 
-        miningRequest = false
-        herbalismRequest = false
+        pendingRequest = nil
 
         C_Timer.After(0.25, CheckTracking)
     end
@@ -398,11 +396,8 @@ SlashCmdList["GATHERERDIAG"] = function()
 
     print("Gatherer diag: isMiner=" .. tostring(isMiner) .. " isPicker=" .. tostring(isPicker) .. " isHunter=" .. tostring(isHunter))
 
-    local _, mineralsActive = FindTracker("Find Minerals")
-    local _, herbsActive = FindTracker("Find Herbs")
-    local huntIndex = FindActiveHunterTrack()
-    print("addonEnabled=" .. tostring(addonEnabled) .. " mineralsActive=" .. tostring(mineralsActive)
-        .. " herbsActive=" .. tostring(herbsActive) .. " activeHunterTrack=" .. tostring(huntIndex))
+    print("addonEnabled=" .. tostring(addonEnabled) .. " activeGatherTracker=" .. tostring(ActiveGatherTracker())
+        .. " pendingRequest=" .. tostring(pendingRequest) .. " activeHunterTrack=" .. tostring(FindActiveHunterTrack()))
 
     local bx, by = toggleButton:GetCenter()
     local mx, my = Minimap:GetCenter()
@@ -449,8 +444,7 @@ local function OnEvent(_, event)
         CheckProfessions()
         UpdateToggleButton()
 
-        miningRequest = false
-        herbalismRequest = false
+        pendingRequest = nil
 
         C_Timer.After(0.25, CheckTracking)
 
@@ -472,8 +466,7 @@ local function OnEvent(_, event)
             return
         end
 
-        miningRequest = false
-        herbalismRequest = false
+        pendingRequest = nil
 
         C_Timer.After(0.25, CheckTracking)
 
@@ -509,8 +502,7 @@ local function OnEvent(_, event)
 
     elseif event == "PLAYER_UNGHOST" then
 
-        miningRequest = false
-        herbalismRequest = false
+        pendingRequest = nil
 
         C_Timer.After(0.25, CheckTracking)
 
