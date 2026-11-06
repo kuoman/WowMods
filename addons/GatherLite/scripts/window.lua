@@ -1,0 +1,769 @@
+local _, addon = ...
+local UI, Routes = addon.UI, addon.Routes
+local HBD = LibStub("HereBeDragons-2.0")
+local Window = {}
+addon.Window = Window
+BINDING_HEADER_GATHERLITE = "GatherLite"
+BINDING_NAME_GATHERLITE_TOGGLE = "Toggle GatherLite window"
+function GatherLite:ToggleWindow()
+    if Window.frame and Window.frame:IsShown() then Window:Hide() else Window:Show() end
+end
+function Window:Hide()
+    if self.frame then self.frame:Hide() end
+end
+local function objectName(object) return (object.type=="fish" or object.objects) and object.name or GatherLite:translate("node." .. object.name) end
+local resourceKinds={ore="mining",herb="herbalism",container="containers",fishing="window.resource.fishing_pools",fish="window.resource.fish_catches"}
+local function T(key, ...) return GatherLite:translate(key, ...) end
+local function resourceLabel(key) return T(resourceKinds[key] or key) end
+local function mapName(id)
+    local info=id and C_Map.GetMapInfo(id)
+    return info and info.name or "World"
+end
+
+function Window:RefreshSettings()
+    if not self.frame then return end
+    for _,panel in pairs(self.settingsPanels) do if panel:IsShown() then panel:Refresh() end end
+    if self.RefreshController then self:RefreshController() end
+end
+function Window:RefreshRoute()
+    if not self.frame then return end
+    local fish=self.object and self.object.type=="fish"
+    self.status:SetText(fish and T("window.status.fishing") or Routes.status)
+    self.requirement:SetText(UI.Requirement(self.object))
+    self.cardTitle:SetText(fish and T("window.card.fishing_locations") or T("window.card.farming_route"))
+    local mapInfo=self.mapID and C_Map.GetMapInfo(self.mapID)
+    local canGenerate=not self.zoneOnly or (mapInfo and mapInfo.mapType==3)
+    self.generate:SetEnabled(self.object~=nil and canGenerate)
+    self.generate:SetText(Routes.progress and T("window.action.restart") or (self.zoneOnly and T("window.action.generate_zone") or T("window.action.generate_zones")))
+    if not canGenerate then self.generate:SetText(T("window.action.choose_zone")) end
+    self.clear:SetEnabled(Routes.byMap~=nil or Routes.progress~=nil)
+    self.clear:SetText(Routes.progress and T("window.action.cancel") or T("window.action.clear"))
+    self.visibility:SetText(GatherLite.db.char.routeVisible==false and T("window.action.show_route") or T("window.action.hide_route"))
+    self.routeIcon:SetTexture(self.object and self.object.icon or "Interface\\Icons\\INV_Misc_Map_01")
+    local route=Routes.object==self.object and Routes.byMap and Routes.byMap[self.mapID]
+    self.routeSummary:SetText(Routes.progress and T("window.status.planning") or
+        (route and T("window.route.ground") or
+        (self.object and T("window.status.browse_zones") or T("window.status.choose_resource"))))
+    self.visibility:SetEnabled(fish or Routes.byMap~=nil)
+    if fish then
+        local count=#((self.locations or {})[self.mapID] or {})
+        self.generate:SetText(count>0 and T("window.action.catch_locations_shown") or T("window.action.zone_information_only"))
+        self.generate:SetEnabled(false)
+        self.clear:SetEnabled(true)
+        self.visibility:SetText(addon.Fishing.visible and T("window.action.hide_catches") or T("window.action.show_catches"))
+        self.routeSummary:SetText(count>0 and T("window.status.reported_catches") or T("window.status.fishing_zone"))
+    end
+    -- Keep the empty state small and only show actions that have something to act on.
+    local selected=self.object~=nil
+    local hasActions=fish or Routes.byMap~=nil or Routes.progress~=nil
+    local multipleZones=selected and #(self.zones or {})>1
+    self.routeCard:SetHeight(selected and (multipleZones and 202 or 170) or 90)
+    self.routeIcon:SetShown(selected); self.routeRim:SetShown(selected)
+    self.requirement:SetShown(selected); self.zoneLabel:SetShown(selected)
+    self.previous:SetShown(multipleZones); self.next:SetShown(multipleZones); self.zoneCounter:SetShown(multipleZones)
+    self.generate:SetShown(selected and not fish)
+    self.visibility:SetShown(selected and hasActions and not Routes.progress)
+    self.clear:SetShown(selected and hasActions)
+    self.selection:ClearAllPoints()
+    self.selection:SetPoint("TOPLEFT",selected and 45 or 12,-12)
+    self.selection:SetWidth(selected and 202 or 238)
+    self.routeSummary:ClearAllPoints()
+    self.routeSummary:SetPoint("TOPLEFT",12,selected and -70 or -34)
+    self.generate:SetWidth(hasActions and 160 or 242)
+    self.clear:SetWidth(fish and 242 or 76)
+    self.open:SetWidth(self.visibility:IsShown() and 117 or 242)
+    self.open:ClearAllPoints(); self.open:SetPoint("BOTTOMRIGHT",-10,10)
+    self.progress:SetShown(Routes.progress~=nil)
+    if Routes.progress then
+        self.progress:SetValue(Routes.progress)
+        self.progress.text:SetText(string.format("Calculating route... %d%%",math.floor(Routes.progress)))
+    end
+    if self.map and self.map:IsVisible() then Routes:DrawOnCanvas(self.mapOverlay,self.map,self.object or false) end
+    if self.RefreshController then self:RefreshController() end
+end
+function Window:ShowRoute(route)
+    if not self.frame then return end
+    if self.object~=route.object then self:SelectObject(route.object) end
+    self:SetMap(route.mapID)
+end
+function Window:CollectLocations()
+    self.locations=Routes:Collect(self.object)
+    self.displayLocations=self.object.type=="fish" and addon.Fishing:ThinLocations(self.locations) or nil
+    self.zones={}
+    for id in pairs(self.locations) do self.zones[#self.zones+1]=id end
+    table.sort(self.zones,function(a,b)
+        local x,y=#self.locations[a],#self.locations[b]
+        return x>y or (x==y and a<b)
+    end)
+    self.zoneIndex=1
+end
+function Window:ToggleObject(object)
+    if object.type=="fish" then self:SelectObject(object); return end
+    local objects={}
+    local found=false
+    for _,selected in ipairs(self.selectedObjects or {}) do
+        if selected==object then found=true else objects[#objects+1]=selected end
+    end
+    if not found then objects[#objects+1]=object end
+    local selection=Routes:Combine(objects)
+    if selection then self:SelectObject(selection,true)
+    else
+        Routes:Clear()
+        self.object=nil; self.selectedObjects={}; self.locations={}; self.zones={}; self.displayLocations=nil
+        self.selection:SetText(T("window.selection.resources"))
+        self:MapChanged()
+    end
+end
+function Window:SelectObject(object, keepMap)
+    if Routes.object and Routes.object~=object then Routes:Clear() end
+    if addon.Fishing then
+        if object.type=="fish" then Routes:Clear() end
+        addon.Fishing:Select(object.type=="fish" and object or nil)
+    end
+    self.object=object
+    self.selectedObjects=object.type=="fish" and {} or object.objects or {object}
+    if addon.GatheringTracking then addon.GatheringTracking:Prefer(object.type) end
+    self:CollectLocations()
+    self.selection:SetText(objectName(object))
+    self:SetMap(keepMap and self.mapID or self.zones[1] or C_Map.GetBestMapForUnit("player"))
+    self:RefreshList(); self:RefreshRoute()
+end
+function Window:SetMap(id)
+    if not id then return end
+    self.map:SetMapID(id)
+    self:MapChanged()
+end
+function Window:MapChanged()
+    self.mapID=self.map:GetMapID()
+    local info=C_Map.GetMapInfo(self.mapID)
+    local parent=info and info.parentMapID
+    self.parentMap=parent and parent>0 and parent or nil
+    self:RefreshBreadcrumbs()
+    for i,id in ipairs(self.zones or {}) do if id==self.mapID then self.zoneIndex=i; break end end
+    local count=#((self.locations or {})[self.mapID] or {})
+    self.zoneLabel:SetText(self.object and (#self.zones==0 and T("window.zone.no_locations") or T("window.zone.locations", count)) or T("window.zone.select_resource"))
+    if self.object and self.object.type=="fish" then
+        self.zoneLabel:SetText(count>0 and T("window.zone.reported_catches", count) or
+            (self.locations[self.mapID] and T("window.zone.fishing_no_pins") or T("window.zone.no_catches")))
+    end
+    local zoneCount=#(self.zones or {})
+    self.previous:SetEnabled(zoneCount>1); self.next:SetEnabled(zoneCount>1)
+    self.zoneCounter:SetText(zoneCount>0 and (self.zoneIndex.." / "..zoneCount.." zones") or "")
+    if Routes.byMap and Routes.object==self.object and info and info.mapType==3 then
+        Routes:SelectMap(self.mapID)
+    end
+    self:RefreshList()
+    self:DrawMap()
+    self:RefreshRoute()
+end
+function Window:DrawMap()
+    local map,overlay=self.map,self.mapOverlay
+    if not map or not overlay then return end
+    local id=map:GetMapID()
+    local info=id and C_Map.GetMapInfo(id)
+    if not info or info.mapType~=3 then
+        for _,pin in ipairs(self.pins) do pin:Hide() end
+        Routes:FinishLines(overlay,0)
+        self.lastDraw=nil
+        return
+    end
+    local left,right,top,bottom=Routes:GetViewport(map)
+    if not left or right<=left or bottom<=top then return end
+    local width,height=overlay:GetWidth(),overlay:GetHeight()
+    local state={map:GetMapID(),left,right,top,bottom,width,height,self.locations,Routes.active,GatherLite.db.char.routeVisible,addon.Fishing and addon.Fishing.visible,GatherLite.db.char.worldmap.neighbors}
+    local same=self.lastDraw~=nil
+    if same then for i=1,12 do if state[i]~=self.lastDraw[i] then same=false; break end end end
+    if same then return end
+    self.lastDraw=state
+    local count,cells=0,{}
+    local fish=self.object and self.object.type=="fish"
+    local spacing=10
+    local function occupied(x,y)
+        local cx,cy=math.floor(x/spacing),math.floor(y/spacing)
+        for dx=-1,1 do
+            for dy=-1,1 do
+                for _,point in ipairs(cells[(cx+dx)..":"..(cy+dy)] or {}) do
+                    if (point.x-x)^2+(point.y-y)^2<spacing*spacing then return true end
+                end
+            end
+        end
+        local key=cx..":"..cy
+        cells[key]=cells[key] or {}
+        cells[key][#cells[key]+1]={x=x,y=y}
+        return false
+    end
+    local locations=(fish and self.displayLocations or self.locations) or {}
+    if self.object and self.object.type=="fish" and not addon.Fishing.visible then locations={} end
+    local allowed={[map:GetMapID()]=true}
+    if GatherLite.db.char.worldmap.neighbors and GatherLite.GetZoneTree then
+        local zone=GatherLite:GetZoneTree()[map:GetMapID()]
+        for _,id in ipairs(zone and zone.neighbors or {}) do allowed[id]=true end
+    end
+    for sourceMap,points in pairs(locations) do
+        for _,point in ipairs(points) do
+            local u,v=Routes:Project(point,sourceMap,map:GetMapID())
+            if allowed[sourceMap] and u and v and u>left and u<right and v>top and v<bottom then
+                local x,y=(u-left)/(right-left)*width,(v-top)/(bottom-top)*height
+                if fish or not occupied(x,y) then
+                    count=count+1
+                    local pin=self.pins[count]
+                    if not pin then
+                        pin=CreateFrame("Frame",nil,overlay)
+                        pin:SetSize(14,14); pin:EnableMouse(false)
+                        pin:SetMouseMotionEnabled(true); pin:SetMouseClickEnabled(false)
+                        pin.icon=pin:CreateTexture(nil,"OVERLAY"); pin.icon:SetAllPoints()
+                        pin:SetScript("OnEnter",function(p)
+                            local object=p.object or self.object
+                            GameTooltip:SetOwner(p,"ANCHOR_RIGHT"); GameTooltip:SetText(objectName(object))
+                            GameTooltip:AddLine(string.format("%s: %.1f, %.1f",mapName(p.mapID),p.point.u*100,p.point.v*100),1,1,1)
+                            GameTooltip:AddLine(UI.Requirement(object),1,.82,.35)
+                            if self.object.type=="fish" then
+                                GameTooltip:AddLine(T("window.tooltip.reported_catch"),.8,.8,.8,true)
+                            end
+                            GameTooltip:Show()
+                        end)
+                        pin:SetScript("OnLeave",function() GameTooltip:Hide() end)
+                        self.pins[count]=pin
+                    end
+                    pin.point,pin.mapID=point,sourceMap
+                    pin.object=point.object and GatherLite:GetNodeObject(point.object) or self.object
+                    pin.icon:SetTexture(pin.object.icon)
+                    pin:ClearAllPoints(); pin:SetPoint("CENTER",overlay,"TOPLEFT",x,-y)
+                    -- Keep complete icons inside the map viewport.
+                    pin:SetShown(x>=7 and x<=width-7 and y>=7 and y<=height-7)
+                end
+            end
+        end
+    end
+    for i=count+1,#self.pins do self.pins[i]:Hide() end
+    Routes:DrawOnCanvas(overlay,map,self.object or false)
+end
+function Window:RefreshList()
+    local query=string.lower(self.search:GetText() or "")
+    self.searchHint:SetShown(query=="")
+    local objects={}
+    local info=self.mapID and C_Map.GetMapInfo(self.mapID)
+    local filterZone=self.zoneOnly and info and info.mapType==3
+    local available=filterZone and Routes:ZoneResources(self.mapID)
+    local checked={}
+    for _,object in ipairs(self.selectedObjects or {}) do checked[object]=true end
+    local catalog={}
+    for _,object in ipairs(addon.nodeDB) do catalog[#catalog+1]=object end
+    for _,object in ipairs(addon.fishDB or {}) do catalog[#catalog+1]=object end
+    for _,object in ipairs(catalog) do
+        local matches=query=="" or string.find(string.lower(objectName(object)),query,1,true)
+            or string.find(object.type,query,1,true)
+        for _,alias in ipairs(object.aliases or {}) do
+            if string.find(string.lower(GatherLite:translate("node." .. alias)),query,1,true) then matches=true end
+        end
+        local category=self.resourceCategory or "all"
+        local inCategory=category=="all" or object.type==category
+            or (category=="fishing" and object.type=="fish")
+        local inZone=not filterZone or (object.type=="fish" and object.maps[self.mapID]~=nil)
+        if filterZone and object.type~="fish" then
+            for _,id in ipairs(object.id or {}) do if available[id] then inZone=true; break end end
+        end
+        if matches and inCategory and inZone then objects[#objects+1]=object end
+    end
+    table.sort(objects,function(a,b) return objectName(a)<objectName(b) end)
+    for i,object in ipairs(objects) do
+        local row=self.rows[i]
+        if not row then
+            row=CreateFrame("Button",nil,self.list.content)
+            row:SetSize(239,36); row:SetPoint("TOPLEFT",0,-(i-1)*38)
+            row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight","ADD")
+            UI.Background(row,i%2==0 and .10 or .065,.055,.028,.65)
+            row.selected=UI.Background(row,.36,.25,.10,.65)
+            row.accent=row:CreateTexture(nil,"OVERLAY")
+            row.accent:SetColorTexture(.92,.70,.25,1)
+            row.accent:SetPoint("TOPLEFT",0,-3); row.accent:SetPoint("BOTTOMLEFT",0,3); row.accent:SetWidth(2)
+            row.icon=row:CreateTexture(nil,"ARTWORK"); row.icon:SetSize(26,26); row.icon:SetPoint("LEFT",7,0)
+            local rim=row:CreateTexture(nil,"OVERLAY"); rim:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+            rim:SetSize(44,44); rim:SetPoint("CENTER",row.icon,"CENTER",0,-1)
+            row.label=UI.Text(row,"","GameFontHighlightSmall"); row.label:SetPoint("TOPLEFT",42,-5); row.label:SetWidth(165)
+            row.detail=UI.Text(row,"","GameFontDisableSmall")
+            row.detail:SetPoint("BOTTOMLEFT",42,5); row.detail:SetWidth(165)
+            row.check=CreateFrame("CheckButton",nil,row,"CheckboxWithLabelTemplate")
+            row.check:SetSize(24,24); row.check:SetPoint("RIGHT",0,0)
+            row.check:EnableMouse(false)
+            row.check.smartNavigationIgnored=true
+            row:SetScript("OnClick",function(button) self:ToggleObject(button.object); if self.FocusRouteAction then self:FocusRouteAction() end end)
+            row.OnSmartNavSelect=function()
+                local top=(i-1)*38
+                local offset=self.list:GetVerticalScroll()
+                if top<offset then offset=top
+                elseif top+36>offset+self.list:GetHeight() then offset=top+36-self.list:GetHeight() end
+                self.list:SetVerticalScroll(math.max(0,math.min(self.list:GetVerticalScrollRange(),offset)))
+                if self.controllerNavigation then self.controllerNavigation.scroll=self.list end
+            end
+            self.rows[i]=row
+        end
+        row.object=object; row.icon:SetTexture(object.icon); row.label:SetText(objectName(object))
+        row.detail:SetText(object.levels and UI.Requirement(object) or resourceLabel(object.type))
+        row.check:SetShown(object.type~="fish"); row.check:SetChecked(checked[object] or false)
+        row.accent:SetShown(checked[object] or object==self.object)
+        row.label:SetTextColor(1,object==self.object and .82 or .95,object==self.object and .45 or .85)
+        row.selected:SetShown(checked[object] or object==self.object); row:Show()
+    end
+    for i=#objects+1,#self.rows do self.rows[i]:Hide() end
+    self.list.content:SetHeight(math.max(1,#objects*38))
+    self.noResults:SetShown(#objects==0)
+    self.resultCount:SetText(T("window.results.count", #objects, filterZone and T("window.results.in_zone", mapName(self.mapID)) or query~="" and T("window.results.found") or T("window.results.to_discover")))
+    if self.RefreshController then self:RefreshController() end
+end
+function Window:LayoutMap()
+    self.sidebar:Show()
+    self.map:ClearAllPoints()
+    self.map:SetPoint("TOPLEFT",self.pages[1],"TOPLEFT",0,-36)
+    self.map:SetPoint("BOTTOMRIGHT",self.pages[1],"BOTTOMRIGHT",-280,0)
+    self.navigation:ClearAllPoints()
+    self.navigation:SetPoint("TOPLEFT",self.pages[1],"TOPLEFT")
+    self.navigation:SetPoint("TOPRIGHT",self.pages[1],"TOPRIGHT",-280,0)
+    self.map:OnFrameSizeChanged()
+    self:DrawMap()
+end
+function Window:CreateMap(page)
+    self.zones,self.rows,self.pins={},{},{}
+    self.sidebar=CreateFrame("Frame",nil,page)
+    local sidebar=self.sidebar
+    sidebar:SetPoint("TOPRIGHT"); sidebar:SetPoint("BOTTOMRIGHT"); sidebar:SetWidth(276)
+    UI.Background(sidebar,.045,.035,.024,.98); UI.Border(sidebar)
+    local header=CreateFrame("Frame",nil,sidebar)
+    header:SetPoint("TOPLEFT",1,0); header:SetPoint("TOPRIGHT",-1,0); header:SetHeight(36)
+    UI.HeaderBackground(header)
+    self.search=CreateFrame("EditBox",nil,header,"InputBoxTemplate")
+    self.search:SetSize(220,24); self.search:SetPoint("LEFT",13,0)
+    self.search:SetAutoFocus(false); self.search:SetMaxLetters(80)
+    self.search:SetScript("OnEscapePressed",function(edit) edit:ClearFocus() end)
+    self.searchHint=UI.Text(self.search,T("window.search"),"GameFontDisableSmall")
+    self.searchHint:SetPoint("LEFT",4,0)
+    local resetSearch=UI.Button(header,"x",24,function()
+        self.search:SetText(""); self.search:ClearFocus()
+    end)
+    resetSearch:SetPoint("RIGHT",-7,0)
+    self.categoryButtons={}
+    self.resourceCategory="all"
+    local categories={
+        {"all","window.resource.all","INV_Misc_Bag_10"},
+        {"ore","mining","Trade_Mining"},
+        {"herb","herbalism","Trade_Herbalism"},
+        {"container","containers"},
+        {"fishing","window.resource.fishing","Trade_Fishing"},
+    }
+    for i,category in ipairs(categories) do
+        local key,label=category[1],category[2]
+        local button=CreateFrame("Button",nil,sidebar)
+        button:SetSize(44,36)
+        button:SetScript("OnClick",function()
+            self.resourceCategory=key
+            if addon.GatheringTracking then addon.GatheringTracking:Prefer(key) end
+            self.list:SetVerticalScroll(0)
+            for _,item in ipairs(self.categoryButtons) do
+                item.selected:SetShown(item.category==key)
+            end
+            self:RefreshList()
+        end)
+        button:SetPoint("TOPLEFT",10+(i-1)*51,-40)
+        UI.Background(button,.09,.07,.04,1)
+        UI.Border(button)
+        button.icon=button:CreateTexture(nil,"ARTWORK")
+        button.icon:SetSize(28,28); button.icon:SetPoint("CENTER")
+        button.icon:SetTexture(key=="container" and "Interface\\AddOns\\GatherLite\\icons\\Open\\Chest"
+            or ("Interface\\Icons\\"..category[3]))
+        button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","ADD")
+        local function showTip()
+            GameTooltip:SetOwner(button,"ANCHOR_LEFT")
+            GameTooltip:SetText(T(label))
+            GameTooltip:Show()
+        end
+        local function hideTip()
+            if GameTooltip:IsOwned(button) then GameTooltip:Hide() end
+        end
+        button:SetScript("OnEnter",showTip)
+        button:SetScript("OnLeave",hideTip)
+        button:SetScript("OnHide",hideTip)
+        button.OnSmartNavSelect=showTip
+        button.OnSmartNavDeselect=hideTip
+        button.category=key
+        button.selected=button:CreateTexture(nil,"OVERLAY")
+        button.selected:SetColorTexture(1,.72,.15,1)
+        button.selected:SetHeight(3)
+        button.selected:SetPoint("BOTTOMLEFT",3,1); button.selected:SetPoint("BOTTOMRIGHT",-3,1)
+        button.selected:SetShown(key=="all")
+        self.categoryButtons[i]=button
+    end
+    self.zoneOnly=true
+    self.zoneFilter=CreateFrame("CheckButton",nil,sidebar,"CheckboxWithLabelTemplate")
+    self.zoneFilter:SetSize(24,24); self.zoneFilter:SetPoint("TOPLEFT",10,-79)
+    self.zoneFilter:SetChecked(true)
+    self.zoneFilter.label=UI.Text(self.zoneFilter,T("window.filter.only_zone"),"GameFontHighlightSmall")
+    self.zoneFilter.label:SetPoint("LEFT",self.zoneFilter,"RIGHT",2,0)
+    self.zoneFilter:SetScript("OnClick",function(button)
+        self.zoneOnly=button:GetChecked()
+        self.list:SetVerticalScroll(0); self:RefreshList(); self:RefreshRoute()
+    end)
+    self.resultCount=UI.Text(sidebar,"","GameFontDisableSmall")
+    self.resultCount:SetPoint("TOPLEFT",14,-107); self.resultCount:SetWidth(242)
+    self.list=UI.Scroll(sidebar,"GatherLiteResourceScroll",239)
+    self.list:SetPoint("TOPLEFT",10,-126); self.list:SetPoint("BOTTOMRIGHT",-28,10)
+    self.noResults=UI.Text(sidebar,T("window.results.none"),"GameFontDisableSmall")
+    self.noResults:SetPoint("TOPLEFT",14,-134)
+    self.search:SetScript("OnTextChanged",function() self.list:SetVerticalScroll(0); self:RefreshList() end)
+
+    -- Anchor to the map viewport, outside its zooming/panning canvas.
+    local card=CreateFrame("Frame",nil,page)
+    self.routeCard=card
+    card:SetSize(262,90)
+    card:EnableMouse(true); card:EnableMouseWheel(true)
+    card:SetScript("OnMouseWheel",function() end)
+    UI.Background(card,.105,.073,.035,.95); UI.Border(card)
+    self.cardTitle=UI.Text(card,T("window.card.farming_route"),"GameFontNormalSmall")
+    self.cardTitle:SetPoint("TOPLEFT",12,-12); self.cardTitle:Hide()
+    self.routeIcon=card:CreateTexture(nil,"ARTWORK")
+    self.routeIcon:SetSize(24,24); self.routeIcon:SetPoint("TOPLEFT",12,-12)
+    local rim=card:CreateTexture(nil,"OVERLAY"); self.routeRim=rim
+    rim:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+    rim:SetSize(40,40); rim:SetPoint("CENTER",self.routeIcon,"CENTER",0,-1)
+    self.selection=UI.Text(card,T("window.selection.resource"),"GameFontNormal")
+    self.selection:SetPoint("TOPLEFT",55,-36); self.selection:SetWidth(192)
+    self.requirement=UI.Text(card,"","GameFontNormalSmall")
+    self.requirement:SetPoint("TOPLEFT",45,-32); self.requirement:SetWidth(192)
+    self.zoneLabel=UI.Text(card,"","GameFontDisableSmall")
+    self.zoneLabel:SetPoint("TOPLEFT",12,-52); self.zoneLabel:SetWidth(192)
+    self.routeSummary=UI.Text(card,"","GameFontHighlightSmall")
+    self.routeSummary:SetPoint("TOPLEFT",12,-96); self.routeSummary:SetWidth(238)
+    local function step(delta)
+        if #self.zones==0 then return end
+        self.zoneIndex=(self.zoneIndex-1+delta)%#self.zones+1; self:SetMap(self.zones[self.zoneIndex])
+        self:RefreshRoute()
+    end
+    self.previous=UI.Button(card,"<",28,function() step(-1) end); self.previous:SetPoint("BOTTOMLEFT",10,74)
+    self.next=UI.Button(card,">",28,function() step(1) end); self.next:SetPoint("BOTTOMRIGHT",-10,74)
+    self.zoneCounter=UI.Text(card,"","GameFontHighlightSmall"); self.zoneCounter:SetPoint("BOTTOM",0,81)
+    self.generate=UI.Button(card,T("window.action.generate_zones"),242,function()
+        if self.object and (not self.zoneOnly or (C_Map.GetMapInfo(self.mapID) or {}).mapType==3) then GatherLite.db.char.routeVisible=true; Routes:Generate(self.object,self.mapID,self.zoneOnly and self.mapID or nil) end
+    end)
+    self.generate:SetPoint("BOTTOMLEFT",10,42)
+    self.visibility=UI.Button(card,T("window.action.hide_route"),117,function()
+        if self.object and self.object.type=="fish" then
+            addon.Fishing.visible=not addon.Fishing.visible
+            addon.Fishing:Refresh(); self:DrawMap()
+        else
+            GatherLite.db.char.routeVisible=GatherLite.db.char.routeVisible==false
+        end
+        self:RefreshRoute()
+    end)
+    self.visibility:SetPoint("BOTTOMLEFT",10,10)
+    self.clear=UI.Button(card,T("window.action.clear"),76,function()
+        if self.object and self.object.type=="fish" then
+            addon.Fishing:Select(nil)
+            self.object=nil; self.locations={}; self.zones={}
+            self.selection:SetText(T("window.selection.resource"))
+            self:MapChanged(); self:RefreshList()
+        end
+        Routes:Clear()
+    end); self.clear:SetPoint("BOTTOMRIGHT",-10,42)
+    self.open=UI.Button(card,T("window.action.open_world_map"),242,function()
+        self:Hide(); ShowUIPanel(WorldMapFrame); WorldMapFrame:SetMapID(self.map:GetMapID())
+    end)
+    self.open:SetPoint("BOTTOMLEFT",10,10)
+
+    self.map=CreateFrame("Frame","GatherLiteMapCanvas",page,"GatherLiteMapCanvasTemplate")
+    local map=self.map
+    -- Forever's MapCanvasMixin calls this in controller mode, but only the
+    -- standard world map defines it. Our controller navigates window controls;
+    -- the artwork canvas never owns controller/soft-cursor focus.
+    function map:IsMapFocused() return false end
+    -- This embedded map has no Blizzard soft cursor. Mouse navigation must use
+    -- its own scroll container even while the gamepad UI style is enabled.
+    function map:GetNormalizedCursorPosition() return self.ScrollContainer:GetNormalizedCursorPosition() end
+    function map:IsCanvasMouseFocus() return self.ScrollContainer:IsMouseMotionFocus() end
+    function map:IsCanvasMouseFocusOrPinFocus() return self:IsCanvasMouseFocus() end
+    map:SetFrameStrata(self.frame:GetFrameStrata())
+    map.ScrollContainer:ClearAllPoints(); map.ScrollContainer:SetAllPoints()
+    map:SetShouldNavigateOnClick(true); map:SetShouldZoomInOnClick(false)
+    map:SetShouldPanOnClick(false); map:SetShouldZoomInstantly(true)
+    addon.MapZoom.Attach(map)
+    self.mapOverlay=CreateFrame("Frame",nil,map.ScrollContainer)
+    self.mapOverlay:SetAllPoints(); self.mapOverlay:EnableMouse(false)
+    self.mapOverlay:SetFrameLevel(map.ScrollContainer:GetFrameLevel()+100)
+    self.mapOverlay.lines={}
+    card:SetPoint("BOTTOMRIGHT",map,"BOTTOMRIGHT",-12,12)
+    card:SetFrameLevel(self.mapOverlay:GetFrameLevel()+10)
+    self:LayoutMap()
+    map:SetMapID(C_Map.GetBestMapForUnit("player") or 947)
+    local levels=map:GetPinFrameLevelsManager()
+    levels:AddFrameLevel("PIN_FRAME_LEVEL_MAP_EXPLORATION")
+    levels:AddFrameLevel("PIN_FRAME_LEVEL_MAP_HIGHLIGHT")
+    local exploration = CreateFromMixins(MapExplorationDataProviderMixin)
+    map:AddDataProvider(exploration)
+    addon.MapReveal.Attach(exploration)
+    if MapHighlightDataProviderMixin then map:AddDataProvider(CreateFromMixins(MapHighlightDataProviderMixin)) end
+    hooksecurefunc(map,"OnMapChanged",function() self:MapChanged() end)
+    local elapsedTotal=0
+    map:HookScript("OnUpdate",function(_,elapsed)
+        elapsedTotal=elapsedTotal+elapsed
+        if elapsedTotal>=.03 then elapsedTotal=0; self:DrawMap() end
+    end)
+    map:Show()
+end
+
+-- Use the same native arrow-shaped breadcrumb templates as Blizzard's map.
+function Window:RefreshBreadcrumbs()
+    local hierarchy, seen = {}, {}
+    local id = self.mapID
+    while id and id > 0 and not seen[id] do
+        seen[id] = true
+        local info = C_Map.GetMapInfo(id)
+        if not info then break end
+        table.insert(hierarchy, 1, { id = id, name = info.name, parent = info.parentMapID })
+        id = info.parentMapID
+    end
+    self.rootMap = hierarchy[1] and hierarchy[1].id or 947
+    NavBar_Reset(self.breadcrumb)
+    for index = 2, #hierarchy do
+        local entry = hierarchy[index]
+        NavBar_AddButton(self.breadcrumb, {
+            name = entry.name, id = entry.id,
+            OnClick = function() self:SetMap(entry.id) end,
+            listFunc = function()
+                local list = {}
+                local children=entry.id==self.mapID and C_Map.GetMapChildrenInfo(entry.id) or nil
+                local maps=children and #children>0 and children or C_Map.GetMapChildrenInfo(entry.parent)
+                for _, info in ipairs(maps or {}) do
+                    if info.mapType >= 1 and info.mapType <= 3 then
+                        list[#list + 1] = { text = info.name, id = info.mapID,
+                            func = function(_, mapID) self:SetMap(mapID) end }
+                    end
+                end
+                table.sort(list, function(a, b) return a.text < b.text end)
+                return list
+            end,
+        })
+    end
+end
+
+function Window:CreateNavigation(page)
+    self.navigation=CreateFrame("Frame",nil,page)
+    local nav=self.navigation
+    nav:SetHeight(36)
+    UI.HeaderBackground(nav)
+    self.breadcrumb=CreateFrame("Frame","GatherLiteMapBreadcrumb",nav,"NavBarTemplate")
+    self.breadcrumb:SetPoint("TOPLEFT",2,-1)
+    self.breadcrumb:SetPoint("BOTTOMRIGHT",-2,1)
+    NavBar_Initialize(self.breadcrumb,"NavButtonTemplate",{
+        name=WORLD or "World", OnClick=function() self:SetMap(self.rootMap or 947) end,
+        listFunc=function()
+            local list={}
+            for _,info in ipairs(C_Map.GetMapChildrenInfo(self.rootMap or 947) or {}) do
+                list[#list+1]={text=info.name,id=info.mapID,func=function(_,id) self:SetMap(id) end}
+            end
+            table.sort(list,function(a,b) return a.text<b.text end)
+            return list
+        end,
+    },self.breadcrumb.home,self.breadcrumb.overflow)
+    local home=self.breadcrumb.homeButton
+    if home and home.MenuArrowButton then
+        home.MenuArrowButton:Show()
+        home:SetWidth(home.text:GetStringWidth()+53)
+    end
+    self.breadcrumb:SetScript("OnSizeChanged",function(bar) NavBar_CheckLength(bar) end)
+
+end
+
+function Window:CreateSettings(page)
+    self.settingsPanels,self.settingsButtons={},{}
+    UI.Parchment(page)
+    local rail=CreateFrame("Frame",nil,page)
+    rail:SetPoint("TOPLEFT"); rail:SetPoint("BOTTOMLEFT"); rail:SetWidth(184)
+    UI.Background(rail,.19,.125,.065,1); UI.Border(rail)
+    UI.Text(rail,T("window.settings.preferences"),"GameFontNormalSmall"):SetPoint("TOPLEFT",12,-16)
+    local groups={"general","worldmap","minimap","tracking","debugging"}
+    local labels={"settings.general","window.settings.world_map","settings.minimap","window.settings.resources","settings.debugging"}
+    local icons={"Interface\\Icons\\inv_misc_spyglass_02","Interface\\Icons\\INV_Misc_Map_01",
+        "compass","Interface\\Icons\\INV_Ore_Copper_01","Interface\\Icons\\Trade_Engineering"}
+    local descriptions={
+        "window.settings.general.description",
+        "window.settings.world_map.description",
+        "window.settings.minimap.description",
+        "window.settings.resources.description",
+        "window.settings.debugging.description",
+    }
+    self.settingsTitle=UI.InkText(page,"","GameFontNormalLarge")
+    self.settingsTitle:SetPoint("TOPLEFT",204,-18)
+    self.settingsTitle:SetTextColor(.25,.14,.055)
+    self.settingsDescription=UI.InkText(page,"","GameFontHighlightSmall")
+    self.settingsDescription:SetPoint("TOPLEFT",204,-44)
+    self.settingsDescription:SetWidth(884)
+    self.settingsDescription:SetTextColor(.36,.25,.13)
+    for i,key in ipairs(groups) do
+        local group=addon.SettingsOptions.args[key]
+        local button=UI.NavButton(rail,T(labels[i]),168,function()
+            if self.EndSliderEdit then self:EndSliderEdit() end
+            self.settingsCategory=key
+            if not self.settingsPanels[key] then self.settingsPanels[key]=UI.SettingsGroup(page,group,"GatherLiteSettings_"..key) end
+            for id,panel in pairs(self.settingsPanels) do panel:SetShown(id==key) end
+            for id,tab in pairs(self.settingsButtons) do tab:Select(id==key) end
+            self.settingsTitle:SetText(T(labels[i])); self.settingsDescription:SetText(T(descriptions[i]))
+            self:RefreshSettings()
+            if self.SetControllerTarget then self:SetControllerTarget(self.settingsPanels[key].controls[1]) end
+        end,icons[i])
+        button:SetHeight(42)
+        button:SetPoint("TOPLEFT",8,-42-(i-1)*48)
+        self.settingsButtons[key]=button
+        if i==1 then self.settingsFirst=button end
+    end
+    local note=UI.Text(rail,T("window.settings.autosave"),"GameFontDisableSmall")
+    note:SetPoint("BOTTOMLEFT",12,16); note:SetWidth(160)
+end
+-- Bundled highlights for release 8.2.3. Update these alongside user-facing changes.
+function Window:CreateChangelog(page)
+    UI.Parchment(page)
+    local title=UI.InkText(page,T("window.tab.changelog"),"GameFontNormalHuge")
+    title:SetPoint("TOPLEFT",28,-22)
+    local version=addon.version
+    local subtitle=UI.InkText(page,version=="@project-version@" and "Development build | Upcoming release highlights"
+        or ("Installed version "..(version or "unknown").." | Release highlights"),"GameFontHighlight")
+    subtitle:SetPoint("TOPLEFT",28,-54)
+    local scroll=UI.Scroll(page,"GatherLiteChangelogScroll",1040)
+    scroll:SetPoint("TOPLEFT",28,-90); scroll:SetPoint("BOTTOMRIGHT",-42,20)
+    self.changelogScroll=scroll
+    local sections={
+        {"FOREVER DATABASE REFRESH",{
+            "Added 17 known gathering locations across 11 resources. The database now contains 30,561 locations.",
+            "All 30,544 locations from 8.2.2 were preserved.",
+            "Checked the mining and herbalism listings. No uncatalogued gathering objects were found.",
+        }},
+    }
+    local y=0
+    for _,section in ipairs(sections) do
+        local heading=UI.Section(scroll.content,section[1],1040)
+        heading:SetPoint("TOPLEFT",0,-y); y=y+40
+        for _,text in ipairs(section[2]) do
+            local bullet=UI.InkText(scroll.content,"-  "..text,"GameFontHighlight")
+            bullet:SetPoint("TOPLEFT",10,-y); bullet:SetWidth(1000)
+            bullet:SetWordWrap(true)
+            y=y+bullet:GetStringHeight()+22
+        end
+        y=y+16
+    end
+    scroll.content:SetHeight(y)
+
+end
+function Window:SelectTab(index)
+    if self.controllerNavigation then self.controllerNavigation:ClearDirectionInput() end
+    if self.EndSliderEdit then self:EndSliderEdit() end
+    if index~=1 and self.helpStep then self:CloseOnboarding() end
+    self.selectedTab=index
+    for i,page in ipairs(self.pages) do page:SetShown(i==index) end
+    PanelTemplates_SetTab(self.frame,index)
+    if index==2 and not next(self.settingsPanels) then self.settingsFirst:GetScript("OnClick")() end
+    self.status:SetShown(index==1)
+    if self.footer then
+        self.footer:SetText(index==1 and T("window.footer.map")
+            or index==3 and T("window.footer.changelog")
+            or T("window.footer.settings"))
+    end
+    if index==1 then self:LayoutMap() end
+    self:RefreshSettings()
+    if self.RefreshController then self:RefreshController(true) end
+end
+function Window:Create()
+    -- A frame can exist even if an earlier creation step raised an error.
+    if self.frame then return self.ready end
+    local frame=CreateFrame("Frame","GatherLiteWindow",UIParent,"ButtonFrameTemplate")
+    self.frame=frame
+    frame:Hide(); frame:SetSize(1160,710)
+    frame:SetScale(math.min(1,(UIParent:GetWidth()-40)/1160,(UIParent:GetHeight()-70)/740))
+    frame:SetClampRectInsets(0,0,0,-32)
+    frame:SetPoint("CENTER"); frame:SetFrameStrata("HIGH"); frame:SetToplevel(true); frame:EnableMouse(true)
+    frame:SetTitle("GatherLite"); frame:SetPortraitToAsset("Interface\\Icons\\inv_misc_spyglass_02")
+    ButtonFrameTemplate_HideButtonBar(frame)
+    frame.Inset:ClearAllPoints(); frame.Inset:SetPoint("TOPLEFT",4,-66); frame.Inset:SetPoint("BOTTOMRIGHT",-6,27)
+    frame:SetClampedToScreen(true)
+    -- This window owns its controller input. Registering it as a UIPanel makes
+    -- Blizzard's FrameControlsManager call addon callbacks during protected
+    -- binding-stack transitions (including SetPreferredGamepadInteractTarget).
+    table.insert(UISpecialFrames,"GatherLiteWindow")
+    frame.CloseButton:SetScript("OnClick",function() self:Hide() end)
+    self.pages,self.tabs={},{}
+    for i,key in ipairs({"window.tab.world_map","window.tab.settings","window.tab.changelog"}) do
+        local page=CreateFrame("Frame",nil,frame)
+        page:SetPoint("TOPLEFT",7,-68); page:SetPoint("BOTTOMRIGHT",-9,29)
+        self.pages[i]=page
+        local tab=CreateFrame("Button","GatherLiteWindowTab"..i,frame,"PanelTabButtonTemplate")
+        tab:SetID(i); tab:SetText(T(key))
+        PanelTemplates_TabResize(tab,24)
+        tab:SetScript("OnClick",function() self:SelectTab(i) end)
+        if i==1 then tab:SetPoint("TOPLEFT",frame,"BOTTOMLEFT",12,7)
+        else tab:SetPoint("TOPLEFT",self.tabs[i-1],"TOPRIGHT",-10,0) end
+        self.tabs[i]=tab
+    end
+    PanelTemplates_SetNumTabs(frame,#self.tabs)
+    self.status=UI.Text(frame,"","GameFontHighlightSmall")
+    self.status:SetPoint("TOPLEFT",80,-44); self.status:SetWidth(1042)
+    self:CreateNavigation(self.pages[1])
+    self:CreateMap(self.pages[1])
+    self.progress=CreateFrame("StatusBar",nil,self.pages[1])
+    self.progress:SetSize(262,24); self.progress:SetPoint("BOTTOM",self.routeCard,"TOP",0,8)
+    self.progress:SetFrameLevel(self.mapOverlay:GetFrameLevel()+5)
+    self.progress:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    self.progress:SetStatusBarColor(.64,.44,.12)
+    self.progress:SetMinMaxValues(0,100)
+    UI.Background(self.progress,.035,.025,.01,.95); UI.Border(self.progress)
+    self.progress.text=UI.Text(self.progress,"","GameFontHighlightSmall"); self.progress.text:SetPoint("CENTER")
+    self.progress:Hide()
+    self:CreateSettings(self.pages[2])
+    self:CreateChangelog(self.pages[3])
+    local version=addon.version
+    local versionText=version=="@project-version@" and "GatherLite (development)"
+        or ("GatherLite v"..(version or "unknown"))
+    self.footerVersion=UI.Text(frame,versionText,"GameFontDisableSmall")
+    self.footerVersion:SetPoint("BOTTOMRIGHT",-16,10)
+    self.footerVersion:SetJustifyH("RIGHT")
+    self.footer=UI.Text(frame,"","GameFontDisableSmall")
+    self.footer:SetPoint("BOTTOMLEFT",16,10)
+    self.footer:SetPoint("RIGHT",self.footerVersion,"LEFT",-16,0)
+    self.footer:SetHeight(14)
+    self.footer:SetWordWrap(false)
+    self:SelectTab(1); self:MapChanged(); self:RefreshList(); self:RefreshRoute()
+    GatherLite:On("settings:update",function()
+        if self.frame:IsShown() then
+            if self.object then self:CollectLocations() end
+            self:MapChanged()
+        end
+        self:RefreshSettings()
+    end)
+    GatherLite:On("nodes:added",function(node)
+        if not node or not self.frame:IsShown() then return end
+        local selected=false
+        if self.object and self.object.type~="fish" then
+            for _,id in ipairs(self.object.id) do
+                if id==node.object then selected=true; break end
+            end
+        end
+        if selected then
+            self:CollectLocations()
+            self:MapChanged()
+        elseif self.zoneOnly and self.mapID==node.mapID then
+            -- A new resource can enter the zone's list without changing the selection.
+            self:RefreshList()
+        end
+    end)
+    self.help=UI.Button(frame,T("window.action.help"),54,function() self:ShowOnboarding() end)
+    self.help:SetPoint("TOPRIGHT",-32,-30)
+    self.status:SetWidth(950)
+    self.ready=true
+    addon.WindowController.Attach(self)
+    return true
+end
+function Window:Show()
+    if not GatherLite:IsLoaded() then return end
+    if not self:Create() then return end
+    self.frame:Show(); self:SelectTab(1)
+    local selectedRoute=Routes.active
+    if not self.object and addon.Fishing then self.object=addon.Fishing.object end
+    if self.object then self:SelectObject(self.object) end
+    if selectedRoute then self:ShowRoute(selectedRoute) end
+    self:RefreshRoute()
+end

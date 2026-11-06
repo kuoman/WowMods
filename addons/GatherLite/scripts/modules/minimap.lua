@@ -1,0 +1,375 @@
+local name, _GatherLite = ...;
+
+local Frames = LibStub("GatherLiteFrame");
+local Pins = LibStub("HereBeDragons-Pins-2.0");
+local HBD = LibStub("HereBeDragons-2.0");
+local nearbyIcon = "Interface\\AddOns\\" .. name .. "\\icons\\track_circle"
+
+local SourceName = "Minimap"
+
+local timeDiff = 0
+local checkDiff = 0
+
+local threadMining
+local threadHerbalism
+local threadContainer
+local threadFishing
+
+local debugState = {
+    lastNodesUpdate = 0,
+    lastIconsUpdate = 0,
+    lastForceUpdate = 0,
+    lastNodesTick = 0,
+    lastIconsTick = 0,
+}
+
+GatherLite.modules[SourceName] = {}
+local source = GatherLite.modules[SourceName]
+
+local MinimapFilter = function(node)
+    if not GatherLite.db.char.minimap.enabled then
+        return false
+    end
+
+    -- check if this map target is tracking the type of node
+    if not GatherLite:GetNodeTracking("minimap", node.type) then
+        return false
+    end
+
+    -- check if were using the predefined database
+    if node.predefined then
+        if not GatherLite.db.global.usePredefined then
+            return false
+        end
+    end
+
+    -- check if the node type is should be ignored.
+    if GatherLite:IsIgnored(node.object) then
+        return false
+    end
+    return true;
+end
+
+local function HideNearbyNode(distance)
+    local settings = GatherLite.db.char.minimap
+    return settings.hideNearbyNodes == true and distance < settings.distance
+end
+
+local function ClosestNodes(type, worldX, worldY, instanceID, mapID, zoneX, zoneY, maxDist, filter)
+    local nodes = GatherLite:GetNearbyZoneNodes(type, mapID, instanceID, zoneX, zoneY, maxDist)
+    local out = {}
+
+    for i = 1, #nodes do
+        local node = nodes[i]
+        if not node.instance then
+            GatherLite:EnsureNodeWorld(node)
+        end
+
+        if node.instance == instanceID and filter(node) then
+            if not node.worldX or not node.worldY then
+                GatherLite:EnsureNodeWorld(node)
+            end
+
+            local _, distance = HBD:GetWorldVector(instanceID, worldX, worldY, node.worldX, node.worldY)
+            if distance and distance < maxDist and not HideNearbyNode(distance) then
+                out[#out + 1] = node
+            end
+        end
+    end
+
+    return out
+end
+
+-- Create minimap node
+local function CreateMinimapNode(node, worldX, worldY, instanceID)
+    if not GatherLite:IsLoaded() then
+        return
+    end
+
+    local object = GatherLite:GetNodeObject(node.object)
+    if not object then
+        return nil
+    end
+
+    GatherLite:debug(_GatherLite.DEBUG_NODE, "Create node of type", node.type);
+
+    local f = Frames:getFrame("minimap");
+    f:SetAlpha(GatherLite.db.char.minimap.opacity);
+    f:SetSize(GatherLite.db.char.minimap.size, GatherLite.db.char.minimap.size)
+
+    local _, distance = HBD:GetWorldVector(instanceID, worldX, worldY, node.worldX, node.worldY)
+    f.nearby = GatherLite.db.char.minimap.nearbyCircles == true
+        and distance and distance < GatherLite.db.char.minimap.distance or false
+    f.texture:SetTexture(f.nearby and nearbyIcon or object.icon)
+    f.node = node;
+    f.object = object
+    f.type = "minimap";
+
+    f:SetFrameStrata(Minimap:GetFrameStrata());
+    --f:SetFrameLevel(Minimap:GetFrameLevel() + 5);
+
+    f:SetScript("OnEnter", function(self)
+        GatherLite:showTooltip(self);
+    end)
+    f:SetScript("OnLeave", function()
+        GatherLite:hideTooltip()
+    end)
+
+    local x, y, instance = HBD:GetWorldCoordinatesFromZone(node.posX, node.posY, node.mapID)
+    Pins:AddMinimapIconWorld(_GatherLite.name, f, instance, x, y, GatherLite.db.char.minimap.edge)
+    return f;
+end
+
+-- Reset minimap nodes
+local function ResetMinimap()
+    if not GatherLite:IsLoaded() then
+        return
+    end
+
+    GatherLite:forEach(Frames.usedFrames, function(frame)
+        if frame.type == "minimap" then
+            frame.node.loaded = false;
+            frame:Unload()
+        end
+    end)
+end
+
+local function createNodeThread(type)
+    if not GatherLite.db.char.minimap.enabled or not GatherLite:GetNodeTracking("minimap", type)
+        or IsInInstance() then return end
+    local worldX, worldY, instanceID = HBD:GetPlayerWorldPosition()
+    local zoneX, zoneY, mapID = HBD:GetPlayerZonePosition()
+    if (worldX == nil or worldY == nil or instanceID == nil) and zoneX ~= nil and zoneY ~= nil and mapID then
+        worldX, worldY, instanceID = HBD:GetWorldCoordinatesFromZone(zoneX, zoneY, mapID)
+    end
+
+    if worldX == nil or worldY == nil or instanceID == nil or zoneX == nil or zoneY == nil or not mapID then
+        return
+    end
+    local t = ClosestNodes(type, worldX, worldY, instanceID, mapID, zoneX, zoneY,
+        GatherLite.db.char.minimap.range, MinimapFilter);
+
+    for i = 1, #t do
+        local node = t[i]
+        if not node.loaded then
+            if CreateMinimapNode(node, worldX, worldY, instanceID) then node.loaded = true end
+        end
+        coroutine.yield()
+    end
+end
+
+local function miningThread()
+    createNodeThread("mining")
+end
+
+local function herbalismThread()
+    createNodeThread("herbalism")
+end
+
+local function containerThread()
+    createNodeThread("containers")
+end
+
+local function fishingThread()
+    createNodeThread("fishing")
+end
+
+local function UpdateMinimapIcons()
+    local x, y, instanceID = HBD:GetPlayerWorldPosition()
+    if (x == nil or y == nil or instanceID == nil) then
+        local zoneX, zoneY, mapID = HBD:GetPlayerZonePosition()
+        if zoneX ~= nil and zoneY ~= nil and mapID then
+            x, y, instanceID = HBD:GetWorldCoordinatesFromZone(zoneX, zoneY, mapID)
+        end
+    end
+
+    if x == nil or y == nil or instanceID == nil then
+        return
+    end
+
+    local inInstance = IsInInstance()
+    local visible = {}
+    -- Removing the current entry during pairs is safe; no snapshot is needed.
+    for _, frame in pairs(Frames.usedFrames) do
+        if frame.type == "minimap" then
+            local node = frame.node
+            if not node.worldX or not node.worldY then
+                GatherLite:EnsureNodeWorld(node)
+            end
+            local distance
+            if node.instance == instanceID and node.worldX and node.worldY then
+                local _
+                _, distance = HBD:GetWorldVector(instanceID, x, y, node.worldX, node.worldY)
+            end
+            if inInstance or not distance or distance >= GatherLite.db.char.minimap.range
+                or not MinimapFilter(node) or HideNearbyNode(distance) then
+                frame:Unload()
+            else
+                local nearby = GatherLite.db.char.minimap.nearbyCircles == true
+                    and distance < GatherLite.db.char.minimap.distance
+                if frame.nearby ~= nearby then
+                    frame.nearby = nearby
+                    frame.texture:SetTexture(nearby and nearbyIcon or frame.object.icon)
+                end
+                visible[#visible + 1] = {frame=frame, distance=distance}
+            end
+        end
+    end
+    -- Spawn alternatives and different resource types can occupy the same
+    -- minimap pixels. Keep the closest representative without changing history
+    -- or hiding the client's live tracking dots. Hide only our texture so HBD
+    -- continues to own pin visibility, clipping and edge placement.
+    table.sort(visible,function(a,b)
+        return a.distance < b.distance or (a.distance == b.distance and a.frame.frameId < b.frame.frameId)
+    end)
+    local radius=C_Minimap and C_Minimap.GetViewRadius and C_Minimap.GetViewRadius() or 233.333
+    if radius<=0 then radius=233.333 end
+    if Minimap:GetWidth()<=0 then return end
+    local spacing=2 * radius * (GatherLite.db.char.minimap.size + 2) / Minimap:GetWidth()
+    local cells={}
+    for _,entry in ipairs(visible) do
+        local frame=entry.frame
+        frame.clusterNodes={}
+        local cx,cy=math.floor(frame.node.worldX/spacing),math.floor(frame.node.worldY/spacing)
+        local overlap=false
+        for dx=-1,1 do
+            for dy=-1,1 do
+                for _,other in ipairs(cells[(cx+dx)..":"..(cy+dy)] or {}) do
+                    if (other.node.worldX-frame.node.worldX)^2+(other.node.worldY-frame.node.worldY)^2 < spacing^2 then
+                        overlap=overlap or other
+                    end
+                end
+            end
+        end
+        frame:SetMouseMotionEnabled(not overlap)
+        if overlap then
+            frame.texture:Hide()
+            overlap.clusterNodes[#overlap.clusterNodes+1]=frame.node
+        else
+            frame.texture:Show()
+            local key=cx..":"..cy
+            cells[key]=cells[key] or {}
+            if frame:IsShown() then cells[key][#cells[key]+1]=frame end
+        end
+    end
+end
+
+local function Update(timeDelta, force)
+    if not GatherLite:IsLoaded() then
+        return
+    end
+
+    local updateIcons = false
+    local updateNodes = false
+
+    if (force) then
+        updateIcons = true
+        updateNodes = true
+        debugState.lastForceUpdate = GetTime()
+
+        threadMining = coroutine.create(miningThread)
+        threadHerbalism = coroutine.create(herbalismThread)
+        threadContainer = coroutine.create(containerThread)
+        threadFishing = coroutine.create(fishingThread)
+
+        checkDiff, timeDiff = 0, 0
+    else
+        checkDiff = checkDiff + timeDelta
+        timeDiff = timeDiff + timeDelta
+        if (checkDiff > 5) then
+            updateNodes = true
+            checkDiff = 0
+        end
+        if (timeDiff >= 1) then
+            updateIcons = true
+            timeDiff = 0
+        end
+    end
+
+    if (updateNodes) then
+        debugState.lastNodesUpdate = GetTime()
+        debugState.lastNodesTick = timeDelta or 0
+        if coroutine.status(threadMining) == "dead" then
+            threadMining = coroutine.create(miningThread)
+        end
+
+        if coroutine.status(threadHerbalism) == "dead" then
+            threadHerbalism = coroutine.create(herbalismThread)
+        end
+
+        if coroutine.status(threadContainer) == "dead" then
+            threadContainer = coroutine.create(containerThread)
+        end
+
+        if coroutine.status(threadFishing) == "dead" then
+            threadFishing = coroutine.create(fishingThread)
+        end
+    end
+
+    if updateIcons then
+        debugState.lastIconsUpdate = GetTime()
+        debugState.lastIconsTick = timeDelta or 0
+    end
+
+    -- Only active node workers need resuming between their five-second scans.
+    if coroutine.status(threadMining) ~= "dead" then coroutine.resume(threadMining) end
+    if coroutine.status(threadHerbalism) ~= "dead" then coroutine.resume(threadHerbalism) end
+    if coroutine.status(threadContainer) ~= "dead" then coroutine.resume(threadContainer) end
+    if coroutine.status(threadFishing) ~= "dead" then coroutine.resume(threadFishing) end
+
+    if updateIcons then UpdateMinimapIcons() end
+end
+
+local function LoadMinimap()
+    Update(0, true)
+end
+
+-- Module setup
+source.setup = function()
+    GatherLite:debug(_GatherLite.DEBUG_DEFAULT, "Loaded minimap module")
+    GatherLite.minimapDebug = debugState
+
+    threadMining = coroutine.create(miningThread)
+    threadHerbalism = coroutine.create(herbalismThread)
+    threadContainer = coroutine.create(containerThread)
+    threadFishing = coroutine.create(fishingThread)
+
+    LoadMinimap();
+
+    GatherLite:On("nodes:added", function(node)
+        if not node or node.loaded or not MinimapFilter(node) or IsInInstance() then return end
+        local worldX, worldY, instanceID = HBD:GetPlayerWorldPosition()
+        local zoneX, zoneY, mapID = HBD:GetPlayerZonePosition()
+        if (worldX == nil or worldY == nil or instanceID == nil) and zoneX ~= nil and zoneY ~= nil and mapID then
+            worldX, worldY, instanceID = HBD:GetWorldCoordinatesFromZone(zoneX, zoneY, mapID)
+        end
+        if worldX == nil or worldY == nil or instanceID == nil or not mapID then return end
+        local allowed = node.mapID == mapID
+        local zone = GatherLite:GetZoneTree()[mapID]
+        if not allowed and zone then
+            for _, neighbor in ipairs(zone.neighbors) do
+                if node.mapID == neighbor then allowed = true; break end
+            end
+        end
+        if not allowed then return end
+        GatherLite:EnsureNodeWorld(node)
+        if node.instance ~= instanceID or not node.worldX or not node.worldY then return end
+        local _, distance = HBD:GetWorldVector(instanceID, worldX, worldY, node.worldX, node.worldY)
+        if not distance or distance >= GatherLite.db.char.minimap.range or HideNearbyNode(distance) then return end
+        node.loaded = CreateMinimapNode(node, worldX, worldY, instanceID) ~= nil
+        -- Recluster visible icons, retaining the existing discovery workers and timers.
+        if node.loaded then UpdateMinimapIcons() end
+    end)
+
+    local frame = CreateFrame("Frame")
+    frame:SetScript("OnUpdate", function(self, elapsed)
+        Update(elapsed)
+    end)
+
+    GatherLite:On("settings:update", function()
+        GatherLite:debug(_GatherLite.DEBUG_DEFAULT, "Update settings")
+
+        ResetMinimap()
+        Update(0, true)
+    end);
+end
