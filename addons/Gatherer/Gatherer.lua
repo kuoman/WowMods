@@ -271,11 +271,11 @@ local function CheckTracking()
 end
 
 
--- minimap button: its icon shows what the character gathers, and with both
--- professions a click toggles between Find Minerals / Find Herbs
-local MINING_ICON = "Interface\\AddOns\\Gatherer\\icons\\copper"
-local HERBS_ICON = "Interface\\AddOns\\Gatherer\\icons\\peacebloom"
-local NEITHER_ICON = "Interface\\AddOns\\Gatherer\\icons\\Soil" -- dual skill, nothing active
+-- minimap button: its icon color shows what the character gathers, and with
+-- both professions a click toggles between Find Minerals / Find Herbs
+local HERBS_ICON = "Interface\\AddOns\\Gatherer\\icons\\herbs"   -- green: Herbalism only
+local MINING_ICON = "Interface\\AddOns\\Gatherer\\icons\\mining" -- red: Mining only
+local BOTH_ICON = "Interface\\AddOns\\Gatherer\\icons\\both"     -- yellow: Mining + Herbalism
 
 -- angle around the minimap edge (degrees, 0 = right, 90 = top); the default
 -- tracking icon sits near 140, so this stays just above it on the upper-left
@@ -327,18 +327,10 @@ local function UpdateToggleButton()
 
     if isMiner and isPicker then
 
-        -- dual skill: show whichever tracker is currently active
-        local activeTracker = ActiveGatherTracker()
-
-        if activeTracker == FIND_HERBS then
-            toggleButton.icon:SetTexture(HERBS_ICON)
-        elseif activeTracker == FIND_MINERALS then
-            toggleButton.icon:SetTexture(MINING_ICON)
-        else
-            toggleButton.icon:SetTexture(NEITHER_ICON)
-        end
-
-        toggleButton.icon:SetDesaturated(activeTracker == nil)
+        -- dual skill: yellow, dimmed while neither tracker is on (the tooltip
+        -- names the active one)
+        toggleButton.icon:SetTexture(BOTH_ICON)
+        toggleButton.icon:SetDesaturated(ActiveGatherTracker() == nil)
 
     elseif isPicker then
         toggleButton.icon:SetTexture(HERBS_ICON)

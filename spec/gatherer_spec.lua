@@ -318,18 +318,30 @@ describe("Gatherer", function()
             assert.is_true(active("Find Minerals"))
         end)
 
-        it("button icon follows the active tracker for a dual-skill character", function()
+        it("a dual-skill character gets the yellow icon, dimmed while nothing is tracked", function()
             wow.world.skills[MINING] = 75
             wow.world.skills[HERBALISM] = 75
             login()
-            assert.is_truthy(GathererToggleButton.icon.texture:find("Soil", 1, true))
+            assert.is_truthy(GathererToggleButton.icon.texture:find("both", 1, true))
+            assert.is_true(GathererToggleButton.icon.desaturated)
+
             wow.world.trackers[3].active = true
             wow.fire("MINIMAP_UPDATE_TRACKING")
-            assert.is_truthy(GathererToggleButton.icon.texture:find("peacebloom", 1, true))
+            assert.is_truthy(GathererToggleButton.icon.texture:find("both", 1, true))
+            assert.is_false(GathererToggleButton.icon.desaturated)
+
             wow.world.trackers[3].active = false
             wow.world.trackers[2].active = true
             wow.fire("MINIMAP_UPDATE_TRACKING")
-            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+            assert.is_truthy(GathererToggleButton.icon.texture:find("both", 1, true))
+            assert.is_false(GathererToggleButton.icon.desaturated)
+        end)
+
+        it("an herbalist gets the green icon", function()
+            wow.world.skills[HERBALISM] = 75
+            login()
+            assert.is_truthy(GathererToggleButton.icon.texture:find("herbs", 1, true))
+            assert.is_false(GathererToggleButton.icon.desaturated)
         end)
 
         it("tooltip names the active tracker", function()
@@ -442,12 +454,11 @@ describe("Gatherer", function()
             wow.world.skills[HERBALISM] = 75
             wow.world.trackers[3].active = true
             login()
-            assert.is_truthy(GathererToggleButton.icon.texture:find("peacebloom", 1, true))
+            assert.is_false(GathererToggleButton.icon.desaturated)
             wow.world.dead = true
             wow.world.trackers[3].active = false
-            wow.world.trackers[2].active = true
             wow.fire("MINIMAP_UPDATE_TRACKING")
-            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+            assert.is_true(GathererToggleButton.icon.desaturated)
         end)
 
         it("ignores every event while disabled", function()
@@ -582,11 +593,12 @@ describe("Gatherer", function()
             assert.is_false(GathererToggleButton:IsShown())
         end)
 
-        it("is shown for a miner with the mining icon", function()
+        it("is shown for a miner with the red mining icon", function()
             wow.world.skills[MINING] = 75
             login()
             assert.is_true(GathererToggleButton:IsShown())
-            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+            assert.is_truthy(GathererToggleButton.icon.texture:find("mining", 1, true))
+            assert.is_false(GathererToggleButton.icon.desaturated)
         end)
 
         it("toggles between Minerals and Herbs for a dual-skill character", function()
