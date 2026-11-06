@@ -16,7 +16,6 @@ local herbalismRequest = false
 local miningRequest = false
 
 local isHunter = false
-local lastGatherer = nil -- "Find Minerals" or "Find Herbs", whichever was last seen active
 
 local MINING_SKILL_ID = 186
 local HERBALISM_SKILL_ID = 182
@@ -130,22 +129,6 @@ local function FindActiveHunterTrack()
 end
 
 
--- the gather tracker to restore: the only one the player has, otherwise the
--- one they last used (Find Minerals by default)
-local function GetPreferredTracker()
-
-    if isMiner and not isPicker then
-        return "Find Minerals"
-    elseif isPicker and not isMiner then
-        return "Find Herbs"
-    elseif isMiner and isPicker then
-        return lastGatherer or "Find Minerals"
-    end
-
-    return nil
-end
-
-
 local MAX_TRACKING_RETRIES = 3
 local trackingRetries = 0
 local auraCheckPending = false
@@ -210,9 +193,6 @@ function CheckTracking()
 
     if herbsActive then
         herbalismRequest = false
-        lastGatherer = "Find Herbs"
-    elseif mineralsActive then
-        lastGatherer = "Find Minerals"
     end
 
     -- a Hunter chose a Track ability; leave it until they use the button
@@ -251,28 +231,18 @@ function CheckTracking()
         end
 
 
-    elseif isMiner and isPicker then
-
-        -- only one tracker can be active at a time; default to Find Minerals
-        -- when neither is on, and leave the player's choice (toggle button) alone
-        if not mineralsActive and not herbsActive then
-
-            if mineralIndex and not miningRequest then
-
-                miningRequest = true
-
-                C_Minimap.SetTracking(mineralIndex, true)
-
-                VerifyTracking("Find Minerals", function() miningRequest = false end)
-            end
-        end
     end
+
+    -- Mining + Herbalism: never automatic. The toggle button is the only thing
+    -- that switches between Find Minerals and Find Herbs.
 end
 
 
--- on-screen toggle between Find Minerals / Find Herbs (Mining + Herbalism only)
-local MINERALS_ICON = 136025 -- Spell_Nature_Earthquake
-local HERBS_ICON = 133939 -- INV_Misc_Flower_02
+-- minimap button: its icon shows what the character gathers, and with both
+-- professions a click toggles between Find Minerals / Find Herbs
+local MINING_ICON = "Interface\\AddOns\\Gatherer\\icons\\copper"
+local HERBS_ICON = "Interface\\AddOns\\Gatherer\\icons\\peacebloom"
+local NEITHER_ICON = "Interface\\AddOns\\Gatherer\\icons\\Soil" -- dual skill, nothing active
 
 -- angle around the minimap edge (degrees, 0 = right, 90 = top); the default
 -- tracking icon sits near 140, so this stays just above it on the upper-left
@@ -315,41 +285,36 @@ local function UpdateToggleButton()
         return
     end
 
-    -- Hunter Track active: show the button (even with only one gathering
-    -- profession) so a click can switch back to herbs/minerals
-    local hunterTrackIndex, hunterTrackInfo = FindActiveHunterTrack()
-
-    if hunterTrackIndex and GetPreferredTracker() then
-
-        if hunterTrackInfo.texture then
-            toggleButton.icon:SetTexture(hunterTrackInfo.texture)
-        elseif GetPreferredTracker() == "Find Herbs" then
-            toggleButton.icon:SetTexture(HERBS_ICON)
-        else
-            toggleButton.icon:SetTexture(MINERALS_ICON)
-        end
-
-        toggleButton.icon:SetDesaturated(false)
-        toggleButton:Show()
-        return
-    end
-
-    if not (isMiner and isPicker) then
+    -- no gathering profession, or a Hunter Track ability is on: hide the
+    -- button (it comes back when that tracking is turned off)
+    if not (isMiner or isPicker) or FindActiveHunterTrack() then
         toggleButton:Hide()
         return
     end
 
-    local _, mineralsActive = FindTracker("Find Minerals")
-    local _, herbsActive = FindTracker("Find Herbs")
+    if isMiner and isPicker then
 
-    if herbsActive then
+        -- dual skill: show whichever tracker is currently active
+        local _, mineralsActive = FindTracker("Find Minerals")
+        local _, herbsActive = FindTracker("Find Herbs")
+
+        if herbsActive then
+            toggleButton.icon:SetTexture(HERBS_ICON)
+        elseif mineralsActive then
+            toggleButton.icon:SetTexture(MINING_ICON)
+        else
+            toggleButton.icon:SetTexture(NEITHER_ICON)
+        end
+
+        toggleButton.icon:SetDesaturated(not mineralsActive and not herbsActive)
+
+    elseif isPicker then
         toggleButton.icon:SetTexture(HERBS_ICON)
+        toggleButton.icon:SetDesaturated(false)
     else
-        toggleButton.icon:SetTexture(MINERALS_ICON)
+        toggleButton.icon:SetTexture(MINING_ICON)
+        toggleButton.icon:SetDesaturated(false)
     end
-
-    -- greyed out when neither tracker is on
-    toggleButton.icon:SetDesaturated(not mineralsActive and not herbsActive)
 
     toggleButton:Show()
 end
@@ -357,23 +322,12 @@ end
 
 toggleButton:SetScript("OnClick", function(self)
 
-    if UnitIsDeadOrGhost("player") then
+    -- only characters with both professions have anything to toggle
+    if not (isMiner and isPicker) then
         return
     end
 
-    -- Hunter Track active: enabling a gather tracker replaces it, since only
-    -- one tracker can be on at a time
-    if FindActiveHunterTrack() then
-
-        local gatherIndex = FindTracker(GetPreferredTracker())
-
-        if gatherIndex then
-            C_Minimap.SetTracking(gatherIndex, true)
-        end
-
-        if GameTooltip:IsOwned(self) then
-            self:GetScript("OnEnter")(self)
-        end
+    if UnitIsDeadOrGhost("player") or InCombatLockdown() then
         return
     end
 
@@ -397,16 +351,12 @@ toggleButton:SetScript("OnEnter", function(self)
 
     local _, mineralsActive = FindTracker("Find Minerals")
     local _, herbsActive = FindTracker("Find Herbs")
-    local hunterTrackIndex, hunterTrackInfo = FindActiveHunterTrack()
 
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine("Gatherer")
+    GameTooltip:AddLine("Tracking: " .. (mineralsActive and "Find Minerals" or herbsActive and "Find Herbs" or "None"), 1, 1, 1)
 
-    if hunterTrackIndex then
-        GameTooltip:AddLine("Tracking: " .. hunterTrackInfo.name, 1, 1, 1)
-        GameTooltip:AddLine("Click to switch back to " .. (GetPreferredTracker() or "gathering") .. ".", 0.7, 0.7, 0.7)
-    else
-        GameTooltip:AddLine("Tracking: " .. (mineralsActive and "Find Minerals" or herbsActive and "Find Herbs" or "None"), 1, 1, 1)
+    if isMiner and isPicker then
         GameTooltip:AddLine("Click to switch Minerals / Herbs.", 0.7, 0.7, 0.7)
     end
 
@@ -438,6 +388,40 @@ SlashCmdList["GATHERER"] = function()
     end
 end
 
+
+
+-- diagnostic: /gatherdiag prints what the client reports for professions and trackers
+SLASH_GATHERERDIAG1 = "/gatherdiag"
+SlashCmdList["GATHERERDIAG"] = function()
+
+    print("Gatherer diag: isMiner=" .. tostring(isMiner) .. " isPicker=" .. tostring(isPicker) .. " isHunter=" .. tostring(isHunter))
+
+    for _, skillID in ipairs({ MINING_SKILL_ID, HERBALISM_SKILL_ID }) do
+
+        local info = C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID and C_SkillInfo.GetSkillLineInfoByID(skillID)
+
+        print("skill " .. skillID .. ": " .. (info and (tostring(info.name) .. " rank " .. tostring(info.rank)) or "nil"))
+    end
+
+    if GetProfessions and GetProfessionInfo then
+
+        for slot, professionIndex in pairs({ GetProfessions() }) do
+            print("profession slot " .. slot .. ": " .. tostring(GetProfessionInfo(professionIndex)))
+        end
+    else
+        print("GetProfessions unavailable")
+    end
+
+    for i = 1, C_Minimap.GetNumTrackingTypes() do
+
+        local info = C_Minimap.GetTrackingInfo(i)
+
+        if info then
+            print("tracker " .. i .. ": " .. tostring(info.name) .. " spellID=" .. tostring(info.spellID)
+                .. " active=" .. tostring(info.active) .. " type=" .. tostring(info.type))
+        end
+    end
+end
 
 
 local function OnEvent(self, event)
