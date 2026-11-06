@@ -1,0 +1,296 @@
+local wow = require("wow_mock")
+
+local MINING, HERBALISM = 186, 182
+local MINERALS, HERBS = 2580, 2383
+
+local function gatherTrackers()
+    return {
+        wow.tracker("Find Fish", 43308),
+        wow.tracker("Find Minerals", MINERALS),
+        wow.tracker("Find Herbs", HERBS),
+    }
+end
+
+-- load the addon and run the login sequence
+local function login()
+    wow.load("addons/Gatherer/Gatherer.lua")
+    wow.fire("PLAYER_ENTERING_WORLD")
+    wow.advance(0.25)
+end
+
+local function active(name)
+    for _, t in ipairs(wow.world.trackers) do
+        if t.name == name then return t.active end
+    end
+end
+
+describe("Gatherer", function()
+
+    before_each(function()
+        wow.install()
+        wow.world.trackers = gatherTrackers()
+    end)
+
+    describe("profession detection", function()
+
+        it("detects Mining from the skill line", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.is_true(wow.printed("Mining detected"))
+            assert.is_false(wow.printed("Herbalism detected"))
+        end)
+
+        it("ignores a skill line with rank 0", function()
+            wow.world.skills[MINING] = 0
+            login()
+            assert.is_false(wow.printed("Mining detected"))
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("falls back to the profession list", function()
+            wow.world.professions = { "Herbalism" }
+            login()
+            assert.is_true(wow.printed("Herbalism detected"))
+        end)
+
+        it("only reports a profession once across repeated events", function()
+            wow.world.skills[MINING] = 75
+            login()
+            wow.fire("SKILL_LINES_CHANGED")
+            wow.fire("SPELLS_CHANGED")
+            local count = 0
+            for _, line in ipairs(wow.world.printed) do
+                if line:find("Mining detected", 1, true) then count = count + 1 end
+            end
+            assert.are.equal(1, count)
+        end)
+    end)
+
+    describe("auto tracking", function()
+
+        it("turns on Find Minerals for a miner", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("turns on Find Herbs for an herbalist", function()
+            wow.world.skills[HERBALISM] = 75
+            login()
+            assert.is_true(active("Find Herbs"))
+        end)
+
+        it("does nothing for a character with no gathering profession", function()
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("never switches automatically with both professions", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("does not recast when the tracker is already active", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers[2].active = true
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("does nothing while dead", function()
+            wow.world.skills[MINING] = 75
+            wow.world.dead = true
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("resumes tracking after the player is resurrected", function()
+            wow.world.skills[MINING] = 75
+            wow.world.dead = true
+            login()
+            wow.world.dead = false
+            wow.fire("PLAYER_UNGHOST")
+            wow.advance(0.25)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("does not cast again while a request is pending", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+        end)
+
+        it("does nothing while the addon is disabled", function()
+            wow.world.skills[MINING] = 75
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERER"]()   -- disable
+            wow.fire("PLAYER_ENTERING_WORLD")
+            wow.advance(0.25)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+    end)
+
+    describe("tracker matching", function()
+
+        it("matches by spell ID when the name is a different locale", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = { { name = "Mineralien finden", spellID = MINERALS, active = false } }
+            login()
+            assert.is_true(wow.world.trackers[1].active)
+        end)
+
+        it("matches by localized spell name when the spell ID is missing", function()
+            wow.world.skills[MINING] = 75
+            wow.world.spellNames[MINERALS] = "Mineralien finden"
+            wow.world.trackers = { { name = "Mineralien finden", active = false } }
+            login()
+            assert.is_true(wow.world.trackers[1].active)
+        end)
+    end)
+
+    describe("verification and retries", function()
+
+        it("announces success once the tracker is confirmed", function()
+            wow.world.skills[MINING] = 75
+            login()
+            wow.advance(1.5)
+            assert.is_true(wow.printed("Find Minerals enabled"))
+        end)
+
+        it("retries a silently failing cast, then gives up after 3 retries", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.advance(30)
+            -- 1 initial attempt + 3 retries
+            assert.are.equal(4, #wow.world.setTrackingCalls)
+            assert.is_true(wow.printed("Could not enable Find Minerals"))
+        end)
+
+        it("succeeds on a retry if the cast works the second time", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.advance(1.4)
+            wow.world.setTrackingWorks = true            wow.advance(10)
+            assert.is_true(active("Find Minerals"))
+            assert.is_false(wow.printed("Could not enable"))
+        end)
+
+        it("stops retrying if the player died in the meantime", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.world.dead = true
+            wow.advance(30)
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+        end)
+    end)
+
+    describe("Hunters", function()
+
+        before_each(function()
+            wow.world.class = "HUNTER"
+            wow.world.trackers = {
+                wow.tracker("Track Beasts", 1494, true),
+                wow.tracker("Find Minerals", MINERALS),
+                wow.tracker("Find Herbs", HERBS),
+            }
+        end)
+
+        it("leaves an active Track ability alone", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("hides the minimap button while a Track ability is on", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.is_false(GathererToggleButton:IsShown())
+        end)
+
+        it("tracks minerals once the Track ability is off", function()
+            wow.world.skills[MINING] = 75
+            login()
+            wow.world.trackers[1].active = false
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.is_true(active("Find Minerals"))
+        end)
+    end)
+
+    describe("minimap button", function()
+
+        it("is hidden without a gathering profession", function()
+            login()
+            assert.is_false(GathererToggleButton:IsShown())
+        end)
+
+        it("is shown for a miner with the mining icon", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.is_true(GathererToggleButton:IsShown())
+            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+        end)
+
+        it("toggles between Minerals and Herbs for a dual-skill character", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            wow.world.trackers[2].active = true
+            login()
+
+            local click = GathererToggleButton.scripts.OnClick
+            click(GathererToggleButton)
+            assert.is_true(active("Find Herbs"))
+            assert.is_false(active("Find Minerals"))
+
+            click(GathererToggleButton)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("ignores clicks in combat", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            login()
+            wow.world.combat = true
+            GathererToggleButton.scripts.OnClick(GathererToggleButton)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("does nothing on click for a single-profession character", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers[2].active = true
+            login()
+            GathererToggleButton.scripts.OnClick(GathererToggleButton)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+    end)
+
+    describe("slash commands", function()
+
+        it("registers /gatherer under the key the client looks up", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            assert.are.equal("/gatherer", SLASH_GATHERER1)
+            assert.is_function(SlashCmdList["GATHERER"])
+        end)
+
+        it("toggles the addon off and on", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERER"]()
+            assert.is_true(wow.printed("disabled"))
+            SlashCmdList["GATHERER"]()
+            assert.is_true(wow.printed("enabled"))
+        end)
+
+        it("registers the /gatherdiag command", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            assert.is_function(SlashCmdList["GATHERERDIAG"])
+            assert.has_no.errors(function() SlashCmdList["GATHERERDIAG"]() end)
+        end)
+    end)
+end)
