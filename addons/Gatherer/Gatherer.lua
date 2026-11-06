@@ -424,7 +424,7 @@ SlashCmdList["GATHERERDIAG"] = function()
 end
 
 
-local function OnEvent(self, event)
+local function OnEvent(_, event)
 
     if not addonEnabled then
         return
