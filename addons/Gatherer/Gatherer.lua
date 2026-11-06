@@ -165,6 +165,9 @@ local function FindActiveHunterTrack()
 end
 
 
+local CHECK_DELAY = 0.25   -- let the client settle before checking tracking
+local VERIFY_DELAY = 1.5   -- how long a cast gets to take effect
+local AURA_DELAY = 1.6     -- outlast the global cooldown an Aspect triggers
 local MAX_TRACKING_RETRIES = 3
 local trackingRetries = 0
 local auraCheckPending = false
@@ -177,7 +180,7 @@ local CheckTracking -- forward declaration, used by VerifyTracking for retries
 -- request flag and try again a limited number of times.
 local function VerifyTracking(trackerName)
 
-    C_Timer.After(1.5, function()
+    C_Timer.After(VERIFY_DELAY, function()
 
         local _, active = FindTracker(trackerName)
 
@@ -369,22 +372,43 @@ toggleButton:SetScript("OnLeave", function()
 end)
 
 
+-- Entry points shared by the event handlers and /gatherer.
+
+local function ScheduleCheck()
+    C_Timer.After(CHECK_DELAY, CheckTracking)
+end
+
+-- forget any unconfirmed request and try to get tracking on again
+local function RetryTracking()
+    pendingRequest = nil
+    ScheduleCheck()
+end
+
+-- skill data often isn't ready at login; re-read it, then check tracking
+local function RecheckProfessions()
+    CheckProfessions()
+    UpdateToggleButton()
+    ScheduleCheck()
+end
+
+-- the full startup sequence used on login and when the addon is re-enabled
+local function Refresh()
+    CheckProfessions()
+    UpdateToggleButton()
+    RetryTracking()
+end
+
+
 -- player command to enable or disable the addon
 SLASH_GATHERER1 = "/gatherer"
 SlashCmdList["GATHERER"] = function()
     addonEnabled = not addonEnabled
     print("Gatherer: " .. (addonEnabled and "enabled." or "disabled."))
 
-    if not addonEnabled then
-        UpdateToggleButton()
+    if addonEnabled then
+        Refresh()
     else
-        -- run the same startup sequence used on login/respawn
-        CheckProfessions()
         UpdateToggleButton()
-
-        pendingRequest = nil
-
-        C_Timer.After(0.25, CheckTracking)
     end
 end
 
@@ -441,12 +465,7 @@ local function OnEvent(_, event)
 
     if event == "PLAYER_ENTERING_WORLD" then
 
-        CheckProfessions()
-        UpdateToggleButton()
-
-        pendingRequest = nil
-
-        C_Timer.After(0.25, CheckTracking)
+        Refresh()
 
 
     elseif event == "MINIMAP_UPDATE_TRACKING" then
@@ -466,9 +485,7 @@ local function OnEvent(_, event)
             return
         end
 
-        pendingRequest = nil
-
-        C_Timer.After(0.25, CheckTracking)
+        RetryTracking()
 
 
     elseif event == "UNIT_AURA" then
@@ -482,7 +499,7 @@ local function OnEvent(_, event)
         auraCheckPending = true
 
         -- wait out the global cooldown the Aspect triggered before casting
-        C_Timer.After(1.6, function()
+        C_Timer.After(AURA_DELAY, function()
             auraCheckPending = false
 
             if addonEnabled then
@@ -493,18 +510,12 @@ local function OnEvent(_, event)
 
     elseif event == "SKILL_LINES_CHANGED" or event == "SPELLS_CHANGED" then
 
-        -- skill data often isn't ready at login; re-check when it loads
-        CheckProfessions()
-        UpdateToggleButton()
-
-        C_Timer.After(0.25, CheckTracking)
+        RecheckProfessions()
 
 
     elseif event == "PLAYER_UNGHOST" then
 
-        pendingRequest = nil
-
-        C_Timer.After(0.25, CheckTracking)
+        RetryTracking()
 
     end
 end
