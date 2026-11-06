@@ -197,13 +197,10 @@ local MAX_TRACKING_RETRIES = 3
 local trackingRetries = 0
 local auraCheckPending = false
 
-local CheckTracking -- forward declaration, used by VerifyTracking for retries
-
-
 -- SetTracking casts the Find spell, which can fail silently (e.g. during the
 -- global cooldown after an Aspect). Confirm it took, otherwise clear the
--- request flag and try again a limited number of times.
-local function VerifyTracking(trackerName)
+-- request flag and call retry() a limited number of times.
+local function VerifyTracking(trackerName, retry)
 
     C_Timer.After(VERIFY_DELAY, function()
 
@@ -230,7 +227,7 @@ local function VerifyTracking(trackerName)
 
         if trackingRetries < MAX_TRACKING_RETRIES then
             trackingRetries = trackingRetries + 1
-            CheckTracking()
+            retry()
         else
             trackingRetries = 0
             print("Gatherer: Could not enable " .. trackerName .. ".")
@@ -239,7 +236,7 @@ local function VerifyTracking(trackerName)
 end
 
 
-function CheckTracking()
+local function CheckTracking()
 
     if UnitIsDeadOrGhost("player") then
         return
@@ -269,7 +266,7 @@ function CheckTracking()
 
         C_Minimap.SetTracking(index, true)
 
-        VerifyTracking(wanted)
+        VerifyTracking(wanted, CheckTracking)
     end
 end
 
