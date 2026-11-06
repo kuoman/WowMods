@@ -215,6 +215,39 @@ describe("Gatherer", function()
             assert.is_false(GathererToggleButton:IsShown())
         end)
 
+        it("enables Find Minerals and shows the button when Track is off, among unrelated trackers", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = {
+                wow.tracker("Track Beasts", 1494),
+                wow.tracker("Find Minerals", MINERALS),
+                { name = "Auctioneer", type = "other", active = false },
+                { name = "Flight Master", type = "other", active = true },
+                { name = "Innkeeper", type = "other", active = true },
+            }
+            login()
+            assert.is_true(active("Find Minerals"))
+            assert.is_true(GathererToggleButton:IsShown())
+        end)
+
+        it("ignores an active minimap filter named Track ... (e.g. Track Quest POIs)", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = {
+                wow.tracker("Track Beasts", 1494),
+                wow.tracker("Find Minerals", MINERALS),
+                { name = "Track Quest POIs", type = "other", active = true },
+            }
+            login()
+            assert.is_true(active("Find Minerals"))
+            assert.is_true(GathererToggleButton:IsShown())
+        end)
+
+        it("prints diagnostics without errors", function()
+            wow.world.skills[MINING] = 75
+            login()
+            assert.has_no.errors(function() SlashCmdList["GATHERERDIAG"]() end)
+            assert.is_true(wow.printed("button: shown="))
+        end)
+
         it("tracks minerals once the Track ability is off", function()
             wow.world.skills[MINING] = 75
             login()

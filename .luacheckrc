@@ -6,7 +6,7 @@ exclude_files = { "addons/GatherLite/**", "dist/**" }
 read_globals = {
     "C_Minimap", "C_SkillInfo", "C_Spell", "C_Timer",
     "CreateFrame", "GameTooltip", "GetProfessionInfo", "GetProfessions",
-    "InCombatLockdown", "Minimap", "UnitClass", "UnitIsDeadOrGhost",
+    "InCombatLockdown", "Minimap", "UIParent", "UnitClass", "UnitIsDeadOrGhost",
 }
 
 -- globals the addons define (slash commands must be globals)
@@ -19,7 +19,7 @@ files["spec/**"] = {
     std = "+busted",
     -- the mock replaces the whole client API, and specs read frames it creates
     globals = {
-        "print", "CreateFrame", "Minimap", "GameTooltip", "SlashCmdList",
+        "print", "CreateFrame", "Minimap", "UIParent", "GameTooltip", "SlashCmdList",
         "UnitClass", "UnitIsDeadOrGhost", "InCombatLockdown", "GetProfessions",
         "GetProfessionInfo", "C_SkillInfo", "C_Spell", "C_Minimap", "C_Timer",
     },

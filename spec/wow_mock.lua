@@ -78,6 +78,9 @@ function M.install()
         return f
     end
     _G.Minimap = newFrame("Minimap")
+    _G.UIParent = newFrame("UIParent")
+    function _G.UIParent.GetWidth() return 1920 end
+    function _G.UIParent.GetHeight() return 1080 end
 
     _G.GameTooltip = newFrame("GameTooltip")
     function _G.GameTooltip:SetOwner(owner) self.owner = owner end
@@ -167,7 +170,7 @@ end
 
 -- helper: build a tracker list entry
 function M.tracker(name, spellID, active)
-    return { name = name, spellID = spellID, active = active or false }
+    return { name = name, spellID = spellID, active = active or false, type = "spell" }
 end
 
 function M.printed(pattern)
