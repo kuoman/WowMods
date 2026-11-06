@@ -18,35 +18,59 @@ local miningRequest = false
 local isHunter = false
 local lastGatherer = nil -- "Find Minerals" or "Find Herbs", whichever was last seen active
 
+local MINING_SKILL_ID = 186
+local HERBALISM_SKILL_ID = 182
+local TRACKER_SPELLS = { ["Find Minerals"] = 2580, ["Find Herbs"] = 2383 }
+
+
+-- true if the player has learned the skill line (rank above 0)
+local function KnowsSkill(skillID)
+
+    if C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID then
+
+        local info = C_SkillInfo.GetSkillLineInfoByID(skillID)
+
+        return info ~= nil and (info.rank or 0) > 0
+    end
+
+    return false
+end
+
 
 local function CheckProfessions()
-
-    isMiner = false
-    isPicker = false
 
     local _, classToken = UnitClass("player")
     isHunter = classToken == "HUNTER"
 
-    local profession1, profession2 = GetProfessions()
+    local miner = KnowsSkill(MINING_SKILL_ID)
+    local picker = KnowsSkill(HERBALISM_SKILL_ID)
 
-    local professions = { profession1, profession2 }
+    -- fall back to the profession list for anything the skill lines missed
+    if GetProfessions and GetProfessionInfo then
 
-    for tableIndex, professionIndex in pairs(professions) do
+        for _, professionIndex in pairs({ GetProfessions() }) do
 
-        if professionIndex then
-
-            local name = GetProfessionInfo(professionIndex)
+            local name = professionIndex and GetProfessionInfo(professionIndex)
 
             if name == "Mining" then
-                isMiner = true
-                print("Profession: Mining detected.")
-
+                miner = true
             elseif name == "Herbalism" then
-                isPicker = true
-                print("Profession: Herbalism detected.")
+                picker = true
             end
         end
     end
+
+    -- this runs on several events; only report changes
+    if miner and not isMiner then
+        print("Profession: Mining detected.")
+    end
+
+    if picker and not isPicker then
+        print("Profession: Herbalism detected.")
+    end
+
+    isMiner = miner
+    isPicker = picker
 end
 
 
@@ -58,8 +82,24 @@ local function FindTracker(trackerName)
 
         local info = C_Minimap.GetTrackingInfo(i)
 
-        if info and info.name == trackerName then
-            return i, info.active
+        if info then
+
+            local spellID = TRACKER_SPELLS[trackerName]
+            local match = info.name == trackerName
+
+            -- some entries omit the name or spellID; also match by spell ID
+            -- and by the client-localized spell name
+            if not match and spellID then
+                if info.spellID == spellID then
+                    match = true
+                elseif C_Spell and C_Spell.GetSpellName and info.name then
+                    match = info.name == C_Spell.GetSpellName(spellID)
+                end
+            end
+
+            if match then
+                return i, info.active
+            end
         end
     end
 
@@ -460,6 +500,15 @@ local function OnEvent(self, event)
         end)
 
 
+    elseif event == "SKILL_LINES_CHANGED" or event == "SPELLS_CHANGED" then
+
+        -- skill data often isn't ready at login; re-check when it loads
+        CheckProfessions()
+        UpdateToggleButton()
+
+        C_Timer.After(0.25, CheckTracking)
+
+
     elseif event == "PLAYER_UNGHOST" then
 
         miningRequest = false
@@ -475,6 +524,8 @@ frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("MINIMAP_UPDATE_TRACKING")
 frame:RegisterEvent("PLAYER_ALIVE")
 frame:RegisterEvent("PLAYER_UNGHOST")
+frame:RegisterEvent("SKILL_LINES_CHANGED")
+frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterUnitEvent("UNIT_AURA", "player")
 
 frame:SetScript("OnEvent", OnEvent)
