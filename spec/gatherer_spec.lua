@@ -192,6 +192,88 @@ describe("Gatherer", function()
         end)
     end)
 
+    describe("request bookkeeping", function()
+
+        it("herbalist: does not cast again while a request is pending", function()
+            wow.world.skills[HERBALISM] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+            assert.are.equal(3, wow.world.setTrackingCalls[1].index)
+        end)
+
+        it("herbalist: gives up after 3 retries", function()
+            wow.world.skills[HERBALISM] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.advance(30)
+            assert.are.equal(4, #wow.world.setTrackingCalls)
+            assert.is_true(wow.printed("Could not enable Find Herbs"))
+        end)
+
+        it("stops retrying when the player switches to the other gather tracker", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.world.trackers[3].active = true   -- player picked Find Herbs by hand
+            wow.advance(30)
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+            assert.is_false(wow.printed("Could not enable"))
+        end)
+
+        it("re-enables the tracker after the player turns it off", function()
+            wow.world.skills[MINING] = 75
+            login()
+            wow.fire("MINIMAP_UPDATE_TRACKING")   -- client confirms the cast
+            wow.advance(2)
+            wow.world.trackers[2].active = false
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.are.equal(2, #wow.world.setTrackingCalls)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("clears a pending request on respawn so tracking is attempted again", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.fire("PLAYER_ALIVE")
+            wow.advance(0.25)
+            assert.are.equal(2, #wow.world.setTrackingCalls)
+        end)
+
+        it("button click with nothing active switches Minerals on", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            login()
+            GathererToggleButton.scripts.OnClick(GathererToggleButton)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("button icon follows the active tracker for a dual-skill character", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            login()
+            assert.is_truthy(GathererToggleButton.icon.texture:find("Soil", 1, true))
+            wow.world.trackers[3].active = true
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.is_truthy(GathererToggleButton.icon.texture:find("peacebloom", 1, true))
+            wow.world.trackers[3].active = false
+            wow.world.trackers[2].active = true
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+        end)
+
+        it("tooltip names the active tracker", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers[2].active = true
+            login()
+            GathererToggleButton.scripts.OnEnter(GathererToggleButton)
+            assert.are.equal("Tracking: Find Minerals", GameTooltip.lines[2])
+        end)
+    end)
+
     describe("Hunters", function()
 
         before_each(function()

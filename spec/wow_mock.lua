@@ -83,9 +83,10 @@ function M.install()
     function _G.UIParent.GetHeight() return 1080 end
 
     _G.GameTooltip = newFrame("GameTooltip")
-    function _G.GameTooltip:SetOwner(owner) self.owner = owner end
+    _G.GameTooltip.lines = {}
+    function _G.GameTooltip:SetOwner(owner) self.owner = owner; self.lines = {} end
     function _G.GameTooltip:IsOwned(o) return self.owner == o end
-    function _G.GameTooltip:AddLine(text) self.lines = self.lines or {}; self.lines[#self.lines + 1] = text end
+    function _G.GameTooltip:AddLine(text) self.lines[#self.lines + 1] = text end
 
     _G.SlashCmdList = {}
 
