@@ -274,6 +274,161 @@ describe("Gatherer", function()
         end)
     end)
 
+    describe("event handling", function()
+
+        -- tracking already on, then switched off behind the addon's back
+        local function loginWithTrackerLost()
+            wow.world.skills[MINING] = 75
+            login()
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            wow.advance(2)
+            wow.world.trackers[2].active = false
+            wow.world.setTrackingCalls = {}
+        end
+
+        it("UNIT_AURA re-checks only after the global cooldown has passed", function()
+            loginWithTrackerLost()
+            wow.fire("UNIT_AURA")
+            wow.advance(1.5)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+            wow.advance(0.2)
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+        end)
+
+        it("UNIT_AURA queues one check no matter how often it fires", function()
+            loginWithTrackerLost()
+            wow.world.setTrackingWorks = false
+            wow.fire("UNIT_AURA")
+            wow.fire("UNIT_AURA")
+            wow.fire("UNIT_AURA")
+            wow.advance(1.7)
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+        end)
+
+        it("UNIT_AURA queues a new check once the previous one has run", function()
+            loginWithTrackerLost()
+            wow.fire("UNIT_AURA")
+            wow.advance(1.7)
+            assert.are.equal(1, #wow.world.setTrackingCalls)
+            wow.fire("MINIMAP_UPDATE_TRACKING")   -- client confirms the cast
+            wow.world.trackers[2].active = false
+            wow.fire("UNIT_AURA")
+            wow.advance(1.7)
+            assert.are.equal(2, #wow.world.setTrackingCalls)
+        end)
+
+        it("UNIT_AURA is ignored while dead", function()
+            loginWithTrackerLost()
+            wow.world.dead = true
+            wow.fire("UNIT_AURA")
+            wow.advance(5)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("a queued UNIT_AURA check does nothing if the addon was disabled meanwhile", function()
+            loginWithTrackerLost()
+            wow.fire("UNIT_AURA")
+            SlashCmdList["GATHERER"]()   -- disable
+            wow.advance(5)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("SKILL_LINES_CHANGED picks up a profession that loaded late", function()
+            login()
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+            wow.world.skills[MINING] = 75
+            wow.fire("SKILL_LINES_CHANGED")
+            wow.advance(0.25)
+            assert.is_true(active("Find Minerals"))
+            assert.is_true(GathererToggleButton:IsShown())
+        end)
+
+        it("SPELLS_CHANGED picks up a profession that loaded late", function()
+            login()
+            wow.world.skills[HERBALISM] = 75
+            wow.fire("SPELLS_CHANGED")
+            wow.advance(0.25)
+            assert.is_true(active("Find Herbs"))
+        end)
+
+        it("PLAYER_ALIVE does nothing while still a ghost", function()
+            wow.world.skills[MINING] = 75
+            wow.world.dead = true
+            login()
+            wow.fire("PLAYER_ALIVE")
+            wow.advance(0.25)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+        end)
+
+        it("PLAYER_ALIVE resumes tracking after a resurrection", function()
+            wow.world.skills[MINING] = 75
+            wow.world.dead = true
+            login()
+            wow.world.dead = false
+            wow.fire("PLAYER_ALIVE")
+            wow.advance(0.25)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("MINIMAP_UPDATE_TRACKING updates the button even while dead", function()
+            wow.world.skills[MINING] = 75
+            wow.world.skills[HERBALISM] = 75
+            wow.world.trackers[3].active = true
+            login()
+            assert.is_truthy(GathererToggleButton.icon.texture:find("peacebloom", 1, true))
+            wow.world.dead = true
+            wow.world.trackers[3].active = false
+            wow.world.trackers[2].active = true
+            wow.fire("MINIMAP_UPDATE_TRACKING")
+            assert.is_truthy(GathererToggleButton.icon.texture:find("copper", 1, true))
+        end)
+
+        it("ignores every event while disabled", function()
+            wow.world.skills[MINING] = 75
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERER"]()   -- disable
+            for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "MINIMAP_UPDATE_TRACKING", "PLAYER_ALIVE",
+                    "PLAYER_UNGHOST", "SKILL_LINES_CHANGED", "SPELLS_CHANGED", "UNIT_AURA" }) do
+                wow.fire(event)
+            end
+            wow.advance(5)
+            assert.are.equal(0, #wow.world.setTrackingCalls)
+            assert.is_false(GathererToggleButton:IsShown())
+        end)
+
+        it("re-enabling with /gatherer runs the full startup sequence", function()
+            wow.world.skills[MINING] = 75
+            wow.load("addons/Gatherer/Gatherer.lua")
+            SlashCmdList["GATHERER"]()   -- disable
+            assert.is_false(GathererToggleButton:IsShown())
+            SlashCmdList["GATHERER"]()   -- enable
+            assert.is_true(GathererToggleButton:IsShown())
+            wow.advance(0.25)
+            assert.is_true(active("Find Minerals"))
+        end)
+
+        it("PLAYER_UNGHOST clears a pending request and retries", function()
+            wow.world.skills[MINING] = 75
+            wow.world.setTrackingWorks = false
+            login()
+            wow.fire("PLAYER_UNGHOST")
+            wow.advance(0.25)
+            assert.are.equal(2, #wow.world.setTrackingCalls)
+        end)
+
+        it("registers exactly the events it handles", function()
+            wow.load("addons/Gatherer/Gatherer.lua")
+            local expected = { "PLAYER_ENTERING_WORLD", "MINIMAP_UPDATE_TRACKING", "PLAYER_ALIVE",
+                "PLAYER_UNGHOST", "SKILL_LINES_CHANGED", "SPELLS_CHANGED", "UNIT_AURA" }
+            local count = 0
+            for _ in pairs(wow.frame.events) do count = count + 1 end
+            assert.are.equal(#expected, count)
+            for _, event in ipairs(expected) do
+                assert.is_true(wow.frame.events[event])
+            end
+        end)
+    end)
+
     describe("Hunters", function()
 
         before_each(function()
