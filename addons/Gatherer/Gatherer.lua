@@ -74,32 +74,42 @@ local function CheckProfessions()
 end
 
 
+-- Does this tracking entry describe the named gather spell? Some entries omit
+-- the name or spellID, so try the English name, then the spell ID, then the
+-- client-localized spell name.
+local function MatchesTracker(info, trackerName)
+
+    if info.name == trackerName then
+        return true
+    end
+
+    local spellID = TRACKER_SPELLS[trackerName]
+
+    if not spellID then
+        return false
+    end
+
+    if info.spellID == spellID then
+        return true
+    end
+
+    if info.name and C_Spell and C_Spell.GetSpellName then
+        return info.name == C_Spell.GetSpellName(spellID)
+    end
+
+    return false
+end
+
+
+-- returns the index and active state of the named tracker, or nil, false
 local function FindTracker(trackerName)
 
-    local numberOfTrackers = C_Minimap.GetNumTrackingTypes()
-
-    for i = 1, numberOfTrackers do
+    for i = 1, C_Minimap.GetNumTrackingTypes() do
 
         local info = C_Minimap.GetTrackingInfo(i)
 
-        if info then
-
-            local spellID = TRACKER_SPELLS[trackerName]
-            local match = info.name == trackerName
-
-            -- some entries omit the name or spellID; also match by spell ID
-            -- and by the client-localized spell name
-            if not match and spellID then
-                if info.spellID == spellID then
-                    match = true
-                elseif C_Spell and C_Spell.GetSpellName and info.name then
-                    match = info.name == C_Spell.GetSpellName(spellID)
-                end
-            end
-
-            if match then
-                return i, info.active
-            end
+        if info and MatchesTracker(info, trackerName) then
+            return i, info.active
         end
     end
 
