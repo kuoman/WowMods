@@ -457,76 +457,70 @@ SlashCmdList["GATHERERDIAG"] = function()
 end
 
 
-local function OnEvent(_, event)
+-- one handler per event; the events registered below come from this table
+local eventHandlers = {}
 
-    if not addonEnabled then
+function eventHandlers.PLAYER_ENTERING_WORLD()
+    Refresh()
+end
+
+function eventHandlers.MINIMAP_UPDATE_TRACKING()
+    UpdateToggleButton()
+    CheckTracking()   -- does nothing while dead
+end
+
+function eventHandlers.PLAYER_ALIVE()
+
+    if not UnitIsDeadOrGhost("player") then
+        RetryTracking()
+    end
+end
+
+function eventHandlers.PLAYER_UNGHOST()
+    RetryTracking()
+end
+
+-- skill data often isn't ready at login; re-check when it loads
+eventHandlers.SKILL_LINES_CHANGED = RecheckProfessions
+eventHandlers.SPELLS_CHANGED = RecheckProfessions
+
+-- buffs changed (e.g. a Hunter Aspect added, swapped or removed);
+-- fires often, so only queue one check at a time
+function eventHandlers.UNIT_AURA()
+
+    if auraCheckPending or UnitIsDeadOrGhost("player") then
         return
     end
 
-    if event == "PLAYER_ENTERING_WORLD" then
+    auraCheckPending = true
 
-        Refresh()
+    C_Timer.After(AURA_DELAY, function()
+        auraCheckPending = false
 
-
-    elseif event == "MINIMAP_UPDATE_TRACKING" then
-
-        UpdateToggleButton()
-
-        if UnitIsDeadOrGhost("player") then
-            return
+        if addonEnabled then
+            CheckTracking()
         end
-
-        CheckTracking()
-
-
-    elseif event == "PLAYER_ALIVE" then
-
-        if UnitIsDeadOrGhost("player") then
-            return
-        end
-
-        RetryTracking()
+    end)
+end
 
 
-    elseif event == "UNIT_AURA" then
+local function OnEvent(_, event, ...)
 
-        -- buffs changed (e.g. a Hunter Aspect added, swapped or removed);
-        -- fires often, so only queue one check at a time
-        if auraCheckPending or UnitIsDeadOrGhost("player") then
-            return
-        end
+    local handler = eventHandlers[event]
 
-        auraCheckPending = true
-
-        -- wait out the global cooldown the Aspect triggered before casting
-        C_Timer.After(AURA_DELAY, function()
-            auraCheckPending = false
-
-            if addonEnabled then
-                CheckTracking()
-            end
-        end)
-
-
-    elseif event == "SKILL_LINES_CHANGED" or event == "SPELLS_CHANGED" then
-
-        RecheckProfessions()
-
-
-    elseif event == "PLAYER_UNGHOST" then
-
-        RetryTracking()
-
+    if addonEnabled and handler then
+        handler(...)
     end
 end
 
 
-frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-frame:RegisterEvent("MINIMAP_UPDATE_TRACKING")
-frame:RegisterEvent("PLAYER_ALIVE")
-frame:RegisterEvent("PLAYER_UNGHOST")
-frame:RegisterEvent("SKILL_LINES_CHANGED")
-frame:RegisterEvent("SPELLS_CHANGED")
-frame:RegisterUnitEvent("UNIT_AURA", "player")
+for event in pairs(eventHandlers) do
+
+    if event == "UNIT_AURA" then
+        frame:RegisterUnitEvent(event, "player")
+    else
+        frame:RegisterEvent(event)
+    end
+end
 
 frame:SetScript("OnEvent", OnEvent)
