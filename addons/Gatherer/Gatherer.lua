@@ -74,6 +74,29 @@ local function CheckProfessions()
 end
 
 
+-- iterates the client's tracking entries, skipping empty slots:
+--   for index, info in Trackers() do ... end
+local function Trackers()
+
+    local index = 0
+    local count = C_Minimap.GetNumTrackingTypes()
+
+    return function()
+
+        while index < count do
+
+            index = index + 1
+
+            local info = C_Minimap.GetTrackingInfo(index)
+
+            if info then
+                return index, info
+            end
+        end
+    end
+end
+
+
 -- Does this tracking entry describe the named gather spell? Some entries omit
 -- the name or spellID, so try the English name, then the spell ID, then the
 -- client-localized spell name.
@@ -104,12 +127,10 @@ end
 -- returns the index and active state of the named tracker, or nil, false
 local function FindTracker(trackerName)
 
-    for i = 1, C_Minimap.GetNumTrackingTypes() do
+    for index, info in Trackers() do
 
-        local info = C_Minimap.GetTrackingInfo(i)
-
-        if info and MatchesTracker(info, trackerName) then
-            return i, info.active
+        if MatchesTracker(info, trackerName) then
+            return index, info.active
         end
     end
 
@@ -156,16 +177,12 @@ local function FindActiveHunterTrack()
         return nil
     end
 
-    local numberOfTrackers = C_Minimap.GetNumTrackingTypes()
-
-    for i = 1, numberOfTrackers do
-
-        local info = C_Minimap.GetTrackingInfo(i)
+    for index, info in Trackers() do
 
         -- only spells count; minimap filters such as "Track Quest POIs" are
         -- type "other" and are often on by default
-        if info and info.active and info.type == "spell" and info.name and info.name:find("^Track ") then
-            return i, info
+        if info.active and info.type == "spell" and info.name and info.name:find("^Track ") then
+            return index, info
         end
     end
 
@@ -453,14 +470,9 @@ SlashCmdList["GATHERERDIAG"] = function()
         print("GetProfessions unavailable")
     end
 
-    for i = 1, C_Minimap.GetNumTrackingTypes() do
-
-        local info = C_Minimap.GetTrackingInfo(i)
-
-        if info then
-            print("tracker " .. i .. ": " .. tostring(info.name) .. " spellID=" .. tostring(info.spellID)
-                .. " active=" .. tostring(info.active) .. " type=" .. tostring(info.type))
-        end
+    for index, info in Trackers() do
+        print("tracker " .. index .. ": " .. tostring(info.name) .. " spellID=" .. tostring(info.spellID)
+            .. " active=" .. tostring(info.active) .. " type=" .. tostring(info.type))
     end
 end
 
