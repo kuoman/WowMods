@@ -545,6 +545,20 @@ describe("Gatherer", function()
             assert.is_true(GathererToggleButton:IsShown())
         end)
 
+        it("diagnostics list every tracker with its state", function()
+            wow.world.skills[MINING] = 75
+            wow.world.trackers = {
+                wow.tracker("Track Beasts", 1494),
+                { name = "Banker", type = "other", active = false },
+                wow.tracker("Find Minerals", MINERALS, true),
+            }
+            login()
+            SlashCmdList["GATHERERDIAG"]()
+            assert.is_true(wow.printed("tracker 1: Track Beasts spellID=1494 active=false type=spell"))
+            assert.is_true(wow.printed("tracker 2: Banker spellID=nil active=false type=other"))
+            assert.is_true(wow.printed("tracker 3: Find Minerals spellID=2580 active=true type=spell"))
+        end)
+
         it("prints diagnostics without errors", function()
             wow.world.skills[MINING] = 75
             login()
