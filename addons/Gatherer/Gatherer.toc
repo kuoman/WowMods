@@ -2,7 +2,7 @@
 ## Title: Gatherer
 ## Notes: Helps to ensure that if able, a gathering profession tracker is enabled. 
 ## Author: Status Kuo
-## Version: 0.3.1
+## Version: 0.4.0
 ## SavedVariables: GathererDB
 
 Gatherer.lua
