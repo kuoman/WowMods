@@ -120,7 +120,9 @@ local function FindActiveHunterTrack()
 
         local info = C_Minimap.GetTrackingInfo(i)
 
-        if info and info.active and info.name and info.name:find("^Track ") then
+        -- only spells count; minimap filters such as "Track Quest POIs" are
+        -- type "other" and are often on by default
+        if info and info.active and info.type == "spell" and info.name and info.name:find("^Track ") then
             return i, info
         end
     end
