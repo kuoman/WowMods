@@ -5,7 +5,7 @@ exclude_files = { "addons/GatherLite/**", "dist/**" }
 -- WoW API globals the addons read
 read_globals = {
     "C_Minimap", "C_SkillInfo", "C_Spell", "C_Timer",
-    "CreateFrame", "GameTooltip", "GetProfessionInfo", "GetProfessions",
+    "CreateFrame", "GameTooltip", "GetCursorPosition", "GetProfessionInfo", "GetProfessions",
     "InCombatLockdown", "Minimap", "UIParent", "UnitClass", "UnitIsDeadOrGhost",
 }
 
@@ -13,6 +13,7 @@ read_globals = {
 globals = {
     "SlashCmdList",
     "SLASH_GATHERER1", "SLASH_GATHERERDIAG1",
+    "GathererDB",   -- saved variables
 }
 
 files["spec/**"] = {
@@ -20,6 +21,7 @@ files["spec/**"] = {
     -- the mock replaces the whole client API, and specs read frames it creates
     globals = {
         "print", "CreateFrame", "Minimap", "UIParent", "GameTooltip", "SlashCmdList",
+        "GetCursorPosition", "GathererDB",
         "UnitClass", "UnitIsDeadOrGhost", "InCombatLockdown", "GetProfessions",
         "GetProfessionInfo", "C_SkillInfo", "C_Spell", "C_Minimap", "C_Timer",
     },

@@ -22,7 +22,7 @@ local function newTexture()
 end
 
 local function newFrame(name)
-    local f = { name = name, events = {}, scripts = {}, shown = true }
+    local f = { name = name, events = {}, scripts = {}, shown = true, points = {} }
 
     function f:RegisterEvent(e) self.events[e] = true end
     function f:RegisterUnitEvent(e) self.events[e] = true end
@@ -31,6 +31,10 @@ local function newFrame(name)
     function f:Show() self.shown = true end
     function f:Hide() self.shown = false end
     function f:IsShown() return self.shown end
+    function f:ClearAllPoints() self.points = {} end
+    function f:SetPoint(point, relativeTo, relativePoint, x, y)
+        self.points[#self.points + 1] = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+    end
     function f.CreateTexture()
         local tex = newTexture()
         function tex:SetTexture(path) self.texture = path end
@@ -58,6 +62,10 @@ function M.install()
         setTrackingWorks = true,  -- false simulates a cast that fails silently
         setTrackingCalls = {},
         spellNames = {},      -- [spellID] = localized name
+        minimapCenter = { x = 500, y = 500 },
+        minimapWidth = 140,
+        minimapScale = 1,
+        cursor = { x = 0, y = 0 },   -- screen pixels, like GetCursorPosition
         timers = {},
         now = 0,
         printed = {},
@@ -77,7 +85,12 @@ function M.install()
         if name then _G[name] = f end
         return f
     end
+    _G.GathererDB = nil   -- saved variables start empty, like a first run
     _G.Minimap = newFrame("Minimap")
+    function _G.Minimap.GetCenter() return world.minimapCenter.x, world.minimapCenter.y end
+    function _G.Minimap.GetEffectiveScale() return world.minimapScale end
+    function _G.Minimap.GetWidth() return world.minimapWidth end
+    _G.GetCursorPosition = function() return world.cursor.x, world.cursor.y end
     _G.UIParent = newFrame("UIParent")
     function _G.UIParent.GetWidth() return 1920 end
     function _G.UIParent.GetHeight() return 1080 end
@@ -139,7 +152,8 @@ end
 function M.load(path)
     local before = #M.frames
     local chunk = assert(loadfile(path))
-    chunk()
+    -- the client passes the addon's folder name as the file's first argument
+    chunk(path:match("addons/([^/]+)/"))
     M.frame = M.frames[before + 1]  -- the first frame the addon created
     return M.frame
 end
@@ -172,6 +186,12 @@ end
 -- helper: build a tracker list entry
 function M.tracker(name, spellID, active)
     return { name = name, spellID = spellID, active = active or false, type = "spell" }
+end
+
+-- the x, y offset a frame was last anchored with
+function M.offset(frame)
+    local p = frame.points[#frame.points]
+    return p.x, p.y
 end
 
 function M.printed(pattern)
