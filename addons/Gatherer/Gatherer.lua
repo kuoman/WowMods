@@ -11,9 +11,7 @@ local frame = CreateFrame("Frame")
 local addonEnabled = true
 local isMiner = false
 local isPicker = false
-local hasTreasure = false
 
-local treasureRequest = false
 local herbalismRequest = false
 local miningRequest = false
 
@@ -105,54 +103,6 @@ local function GetPreferredTracker()
     end
 
     return nil
-end
-
-
-local function CheckRace()
-
-    if UnitIsDeadOrGhost("player") then
-        return
-    end
-
-    -- a Hunter chose a Track ability; leave it until they use the button
-    if FindActiveHunterTrack() then
-        return
-    end
-
-    local raceName, raceToken, raceID = UnitRace("player")
-
-    if raceName == "Dwarf" then
-
-        local treasureIndex, treasureActive = FindTracker("Find Treasure")
-
-        if treasureActive then
-            treasureRequest = false
-            return
-        end
-
-        if treasureIndex and not treasureRequest then
-
-            treasureRequest = true
-
-            print("Dwarf Race detected. Enabling Find Treasure tracking.")
-
-            C_Minimap.SetTracking(treasureIndex, true)
-
-            C_Timer.After(0.25, function()
-
-                local _, treasureActiveNow = FindTracker("Find Treasure")
-
-                if treasureActiveNow then
-                    print("Gatherer: Find Treasure active.")
-                else
-                    print("Gatherer: Could not enable Find Treasure.")
-                end
-
-                treasureRequest = false
-
-            end)
-        end
-    end
 end
 
 
@@ -443,14 +393,8 @@ SlashCmdList["GATHERER"] = function()
 
         miningRequest = false
         herbalismRequest = false
-        treasureRequest = false
 
-        C_Timer.After(0.25, function()
-            CheckTracking()
-            C_Timer.After(1.2, function()
-                CheckRace()
-            end)
-        end)
+        C_Timer.After(0.25, CheckTracking)
     end
 end
 
@@ -469,17 +413,8 @@ local function OnEvent(self, event)
 
         miningRequest = false
         herbalismRequest = false
-        treasureRequest = false
 
-        C_Timer.After(0.25, function()
-
-            CheckTracking()
-
-            C_Timer.After(1.2, function()
-                CheckRace()
-            end)
-
-        end)
+        C_Timer.After(0.25, CheckTracking)
 
 
     elseif event == "MINIMAP_UPDATE_TRACKING" then
@@ -492,10 +427,6 @@ local function OnEvent(self, event)
 
         CheckTracking()
 
-        C_Timer.After(1.2, function()
-            CheckRace()
-        end)
-
 
     elseif event == "PLAYER_ALIVE" then
 
@@ -505,17 +436,8 @@ local function OnEvent(self, event)
 
         miningRequest = false
         herbalismRequest = false
-        treasureRequest = false
 
-        C_Timer.After(0.25, function()
-
-            CheckTracking()
-
-            C_Timer.After(1.2, function()
-                CheckRace()
-            end)
-
-        end)
+        C_Timer.After(0.25, CheckTracking)
 
 
     elseif event == "UNIT_AURA" then
@@ -542,17 +464,8 @@ local function OnEvent(self, event)
 
         miningRequest = false
         herbalismRequest = false
-        treasureRequest = false
 
-        C_Timer.After(0.25, function()
-
-            CheckTracking()
-
-            C_Timer.After(1.2, function()
-                CheckRace()
-            end)
-
-        end)
+        C_Timer.After(0.25, CheckTracking)
 
     end
 end
